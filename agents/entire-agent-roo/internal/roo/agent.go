@@ -23,9 +23,14 @@ func (a *Agent) Info() protocol.InfoResponse {
 		IsPreview:       true,
 		ProtectedDirs:   []string{},
 		ProtectedFiles:  []string{},
-		HookNames:       []string{},
+		HookNames: []string{
+			"session-start",
+			"turn-start",
+			"turn-end",
+			"session-end",
+		},
 		Capabilities: protocol.DeclaredCapabilities{
-			Hooks:              false,
+			Hooks:              true,
 			TranscriptAnalyzer: true,
 			TranscriptPreparer: true,
 			TokenCalculator:    true,
@@ -59,9 +64,9 @@ func (a *Agent) GetSessionID(input *protocol.HookInputJSON) string {
 
 func (a *Agent) FormatResumeCommand(sessionID string) string {
 	if sessionID == "" {
-		return "roo --resume"
+		return "code"
 	}
-	return "roo --resume " + shellQuote(sessionID)
+	return "code"
 }
 
 func shellQuote(value string) string {

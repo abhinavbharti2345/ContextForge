@@ -1,6 +1,9 @@
 package roo
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -195,3 +198,36 @@ func TestMultipleSimultaneousTasks(t *testing.T) {
 		t.Errorf("task2Events = %v, want [session-start, turn-start]", task2Events)
 	}
 }
+
+func TestBootstrapExistingTasksDoesNotEmitHistoricalEvents(t *testing.T) {
+	tempTasksDir := t.TempDir()
+	task1Dir := filepath.Join(tempTasksDir, "task-historical")
+	if err := os.MkdirAll(task1Dir, 0o755); err != nil {
+		t.Fatalf("failed to create task dir: %v", err)
+	}
+
+	uiMessages := []ClineMessage{
+		{Ts: 100, Type: "say", Say: "task", Text: "Old completed task"},
+		{Ts: 105, Type: "say", Say: "completion_result", Text: "Old work complete."},
+	}
+	uiBytes, _ := json.Marshal(uiMessages)
+	if err := os.WriteFile(filepath.Join(task1Dir, "ui_messages.json"), uiBytes, 0o644); err != nil {
+		t.Fatalf("failed to write ui_messages.json: %v", err)
+	}
+
+	emitter := &MockHookEmitter{}
+	watcher := NewWatcher(WatcherOptions{
+		TasksDir: tempTasksDir,
+		Emitter:  emitter,
+	})
+
+	// Run ScanOnce simulating regular watch cycle after restart
+	watcher.ScanOnce()
+
+	// Should not emit any events for pre-existing settled task
+	events := emitter.GetEvents()
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events for historical tasks on startup, got %v", events)
+	}
+}
+

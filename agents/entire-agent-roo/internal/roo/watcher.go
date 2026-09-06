@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/entireio/external-agents/agents/entire-agent-roo/internal/protocol"
 )
 
 type HookEmitter interface {
@@ -33,14 +35,19 @@ func (e *DefaultHookEmitter) Emit(hookName string, payload RooHookPayload) error
 		cmdName = "entire"
 	}
 
+	repoRoot := e.RepoRoot
+	if repoRoot == "" {
+		repoRoot = protocol.RepoRoot()
+	}
+
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
 	cmd := exec.Command(cmdName, "hooks", "roo", hookName)
-	if e.RepoRoot != "" {
-		cmd.Dir = e.RepoRoot
+	if repoRoot != "" {
+		cmd.Dir = repoRoot
 	}
 	cmd.Stdin = strings.NewReader(string(data) + "\n")
 	cmd.Stdout = os.Stdout
@@ -50,18 +57,19 @@ func (e *DefaultHookEmitter) Emit(hookName string, payload RooHookPayload) error
 }
 
 type TaskWatcherState struct {
-	TaskID                string
-	SessionStarted        bool
-	LastEmittedTurnIndex  int
-	LastEmittedPrompt     string
-	InFlight              bool
-	SessionEnded          bool
-	LastSettledSignature  string
-	LastUpdated           time.Time
+	TaskID               string
+	SessionStarted       bool
+	LastEmittedTurnIndex int
+	LastEmittedPrompt    string
+	InFlight             bool
+	SessionEnded         bool
+	LastSettledSignature string
+	LastUpdated          time.Time
 }
 
 type Watcher struct {
 	tasksDir         string
+	repoRoot         string
 	pollInterval     time.Duration
 	debounceDuration time.Duration
 	emitter          HookEmitter
@@ -71,6 +79,7 @@ type Watcher struct {
 
 type WatcherOptions struct {
 	TasksDir         string
+	RepoRoot         string
 	PollInterval     time.Duration
 	DebounceDuration time.Duration
 	Emitter          HookEmitter
@@ -80,6 +89,11 @@ func NewWatcher(opts WatcherOptions) *Watcher {
 	tasksDir := opts.TasksDir
 	if tasksDir == "" {
 		tasksDir = GetGlobalStorageTasksDir()
+	}
+
+	repoRoot := opts.RepoRoot
+	if repoRoot == "" {
+		repoRoot = protocol.RepoRoot()
 	}
 
 	pollInterval := opts.PollInterval
@@ -96,21 +110,87 @@ func NewWatcher(opts WatcherOptions) *Watcher {
 	if emitter == nil {
 		emitter = &DefaultHookEmitter{
 			EntireCommand: "entire",
-			RepoRoot:      GetGlobalStorageTasksDir(),
+			RepoRoot:      repoRoot,
 		}
 	}
 
-	return &Watcher{
+	w := &Watcher{
 		tasksDir:         tasksDir,
+		repoRoot:         repoRoot,
 		pollInterval:     pollInterval,
 		debounceDuration: debounce,
 		emitter:          emitter,
 		states:           make(map[string]*TaskWatcherState),
 	}
+
+	w.BootstrapExistingTasks()
+	return w
+}
+
+func (w *Watcher) BootstrapExistingTasks() {
+	if w.tasksDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(w.tasksDir)
+	if err != nil {
+		return
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		taskID := entry.Name()
+		taskFolder := filepath.Join(w.tasksDir, taskID)
+		uiPath := filepath.Join(taskFolder, "ui_messages.json")
+
+		uiData, err := os.ReadFile(uiPath)
+		if err != nil {
+			continue
+		}
+		var uiMessages []ClineMessage
+		if err := json.Unmarshal(uiData, &uiMessages); err != nil {
+			continue
+		}
+
+		var apiHistory []ApiMessage
+		apiPath := filepath.Join(taskFolder, "api_conversation_history.json")
+		if apiData, err := os.ReadFile(apiPath); err == nil {
+			_ = json.Unmarshal(apiData, &apiHistory)
+		}
+
+		lastPromptIdx, _, _ := DetectNewPrompt(uiMessages, -1)
+		sig := calculateContentSignature(uiMessages)
+		isTurnDone := IsTurnCompleted(uiMessages, apiHistory)
+		isTaskDone := IsTaskCompleted(uiMessages)
+
+		settledSig := sig
+		inFlight := false
+		if !isTurnDone && !isTaskDone {
+			// Task is actively running mid-turn at watcher boot time
+			inFlight = true
+			settledSig = ""
+		}
+
+		w.states[taskID] = &TaskWatcherState{
+			TaskID:               taskID,
+			SessionStarted:       true,
+			LastEmittedTurnIndex: lastPromptIdx,
+			InFlight:             inFlight,
+			SessionEnded:         isTaskDone,
+			LastSettledSignature: settledSig,
+			LastUpdated:          time.Now(),
+		}
+	}
 }
 
 func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHistory []ApiMessage) error {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	state, exists := w.states[taskID]
 	if !exists {
 		state = &TaskWatcherState{
@@ -119,19 +199,22 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 		}
 		w.states[taskID] = state
 	}
-	w.mu.Unlock()
 
 	if len(uiMessages) == 0 {
 		return nil
 	}
 
+	sessionRef := transcriptPath(taskID)
+
 	// 1. SessionStart check
 	if !state.SessionStarted {
 		payload := RooHookPayload{
-			Event:     "SessionStart",
-			HookEvent: "SessionStart",
-			SessionID: taskID,
-			TaskID:    taskID,
+			Event:      "SessionStart",
+			HookEvent:  "SessionStart",
+			SessionID:  taskID,
+			TaskID:     taskID,
+			SessionRef: sessionRef,
+			WorkingDir: w.repoRoot,
 		}
 		_ = w.emitter.Emit("session-start", payload)
 		state.SessionStarted = true
@@ -143,14 +226,18 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 		state.LastEmittedTurnIndex = newPromptIndex
 		state.LastEmittedPrompt = newPrompt
 		state.InFlight = true
+		state.SessionEnded = false
 
 		payload := RooHookPayload{
-			Event:     "UserPromptSubmit",
-			HookEvent: "UserPromptSubmit",
-			SessionID: taskID,
-			TaskID:    taskID,
-			Prompt:    newPrompt,
-			Message:   newPrompt,
+			Event:      "UserPromptSubmit",
+			HookEvent:  "UserPromptSubmit",
+			SessionID:  taskID,
+			TaskID:     taskID,
+			SessionRef: sessionRef,
+			Prompt:     newPrompt,
+			UserPrompt: newPrompt,
+			Message:    newPrompt,
+			WorkingDir: w.repoRoot,
 		}
 		_ = w.emitter.Emit("turn-start", payload)
 	}
@@ -163,10 +250,12 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 			state.InFlight = false
 
 			payload := RooHookPayload{
-				Event:     "Stop",
-				HookEvent: "Stop",
-				SessionID: taskID,
-				TaskID:    taskID,
+				Event:      "Stop",
+				HookEvent:  "Stop",
+				SessionID:  taskID,
+				TaskID:     taskID,
+				SessionRef: sessionRef,
+				WorkingDir: w.repoRoot,
 			}
 			_ = w.emitter.Emit("turn-end", payload)
 		}
@@ -176,10 +265,12 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 	if !state.SessionEnded && IsTaskCompleted(uiMessages) {
 		state.SessionEnded = true
 		payload := RooHookPayload{
-			Event:     "SessionEnd",
-			HookEvent: "SessionEnd",
-			SessionID: taskID,
-			TaskID:    taskID,
+			Event:      "SessionEnd",
+			HookEvent:  "SessionEnd",
+			SessionID:  taskID,
+			TaskID:     taskID,
+			SessionRef: sessionRef,
+			WorkingDir: w.repoRoot,
 		}
 		_ = w.emitter.Emit("session-end", payload)
 	}
@@ -242,8 +333,7 @@ func (w *Watcher) Watch(ctx context.Context) error {
 func DetectNewPrompt(uiMessages []ClineMessage, lastTurnIndex int) (int, string, bool) {
 	for i := len(uiMessages) - 1; i > lastTurnIndex; i-- {
 		msg := uiMessages[i]
-		if (msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback")) ||
-			(msg.Type == "ask" && msg.Ask == "followup" && msg.Text != "") {
+		if msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback") {
 			text := strings.TrimSpace(msg.Text)
 			if text != "" {
 				return i, text, true
@@ -311,6 +401,7 @@ func RunWatcher(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 
 	tasksDir := fs.String("tasks-dir", "", "path to Roo Code tasks directory")
+	repoRoot := fs.String("repo-root", "", "path to target git repository root")
 	pollMs := fs.Int("poll-interval", 250, "poll interval in milliseconds")
 	debounceMs := fs.Int("debounce", 500, "debounce interval in milliseconds")
 	entireCmd := fs.String("entire-cmd", "entire", "entire CLI executable name or path")
@@ -327,7 +418,13 @@ func RunWatcher(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("could not resolve Roo Code tasks storage directory; please pass --tasks-dir")
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Starting entire-agent-roo watcher on: %s\n", dir)
+	root := *repoRoot
+	if root == "" {
+		root = protocol.RepoRoot()
+	}
+
+	_, _ = fmt.Fprintf(stdout, "Starting entire-agent-roo watcher on tasks dir: %s\n", dir)
+	_, _ = fmt.Fprintf(stdout, "Target repository root: %s\n", root)
 	_, _ = fmt.Fprintf(stdout, "Poll interval: %dms | Debounce: %dms\n", *pollMs, *debounceMs)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -343,10 +440,12 @@ func RunWatcher(args []string, stdout, stderr io.Writer) error {
 
 	watcher := NewWatcher(WatcherOptions{
 		TasksDir:         dir,
+		RepoRoot:         root,
 		PollInterval:     time.Duration(*pollMs) * time.Millisecond,
 		DebounceDuration: time.Duration(*debounceMs) * time.Millisecond,
 		Emitter: &DefaultHookEmitter{
 			EntireCommand: *entireCmd,
+			RepoRoot:      root,
 		},
 	})
 

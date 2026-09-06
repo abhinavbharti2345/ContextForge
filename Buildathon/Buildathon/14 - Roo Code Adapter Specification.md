@@ -160,9 +160,33 @@ An integration audit of `agents/entire-agent-roo` and `watcher.go` reveals key l
 
 ---
 
+## 6. End-to-End Verified Lifecycle Chain
+
+```mermaid
+graph TD
+    A["Roo Task Written\n(~/.config/Code/.../tasks/<id>/)"] --> B["Watcher Detects Settled Turn\n(entire-agent-roo watch)"]
+    B --> C["Entire Hook Dispatched\n(entire hooks roo turn-end in repoRoot)"]
+    C --> D["ParseHook Invocation\n(entire-agent-roo parse-hook --hook turn-end)"]
+    D --> E["PrepareTranscript Execution\n(.entire/tmp/roo/<id>.json materialized)"]
+    E --> F["Typed EventJSON Emitted\n(Type: 3, SessionRef: .entire/tmp/roo/<id>.json)"]
+    F --> G["Entire Transcript Pipeline\n(extract-modified-files, extract-summary, calculate-tokens)"]
+    G --> H["Git Checkpoint Committed\n(refs/heads/entire/checkpoints/v1)"]
+```
+
+1. **Roo task** $\rightarrow$ Roo Code appends turn messages to `ui_messages.json`.
+2. **Correct repository** $\rightarrow$ Watcher is bound to target Git repository (`--repo-root` / `ENTIRE_REPO_ROOT`).
+3. **Watcher** $\rightarrow$ Evaluates state machine with mutex safety; confirms settled turn signature.
+4. **Entire hook** $\rightarrow$ Fires `entire hooks roo turn-end` in the Git repo directory with JSON stdin.
+5. **ParseHook & EventJSON** $\rightarrow$ Parses payload and maps to `protocol.EventJSON` (`Type: 3`).
+6. **SessionRef & Prepared Transcript** $\rightarrow$ `PrepareTranscript` packages `RooTaskEnvelope` into `.entire/tmp/roo/<sessionID>.json` before returning.
+7. **TurnEnd & Checkpoint** $\rightarrow$ Entire CLI runs transcript analyzers against `SessionRef` and writes the Git checkpoint.
+
+---
+
 ## Related Notes
 * [[00 - Project Overview]] — Executive summary of ContextForge / Entire adapter.
 * [[04 - Architecture]] — Complete architecture diagrams.
 * [[06 - External Agent Integration]] — Wire protocol specification.
 * [[13 - Technical Research]] — Candidate evaluation and research findings.
+
 

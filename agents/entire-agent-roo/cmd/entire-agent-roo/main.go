@@ -66,6 +66,16 @@ func main() {
 		err = protocol.HandleCalculateTokens(os.Args[2:], os.Stdin, os.Stdout, agent)
 	case "watch":
 		err = roo.RunWatcher(os.Args[2:], os.Stdout, os.Stderr)
+	case "why":
+		if len(os.Args) < 3 {
+			fatalf("usage: entire-agent-roo why <file>")
+		}
+		err = roo.QueryWhy(protocol.RepoRoot(), os.Args[2], os.Stdout)
+	case "history":
+		if len(os.Args) < 3 {
+			fatalf("usage: entire-agent-roo history <file>")
+		}
+		err = roo.QueryHistory(protocol.RepoRoot(), os.Args[2], os.Stdout)
 	default:
 		fatalf("unknown subcommand: %s", os.Args[1])
 	}

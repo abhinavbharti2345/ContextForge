@@ -28,7 +28,7 @@ Roo Code does not provide native lifecycle command hooks in its extension codeba
 ## Protocol Mapping
 | Subcommand | Native Roo Concept | Implementation |
 | :--- | :--- | :--- |
-| `info` | Static metadata | Returns name `roo`, type `Roo Code`, preview, `hooks: false` |
+| `info` | Static metadata | Returns name `roo`, type `Roo Code`, preview, `hooks: true` |
 | `detect` | CLI / globalStorage | Checks `roo` on PATH or VS Code task storage directory |
 | `get-session-id` | `taskId` | Returns task ID |
 | `get-session-dir` | `.entire/tmp/roo` | Isolated temp session dir |
@@ -40,21 +40,24 @@ Roo Code does not provide native lifecycle command hooks in its extension codeba
 | `reassemble-transcript`| Byte chunks | Concatenates chunks |
 | `compact-transcript` | Compact JSONL | Emits Entire Compact Transcript format |
 | `prepare-transcript` | Storage Ingestion | Ingests `ui_messages.json` + `api_conversation_history.json` from globalStorage |
-| `format-resume-command`| Roo CLI resume | `roo --resume <taskId>` |
-| `parse-hook` | No-op | Returns `nil` (Roo has no native command hooks) |
+| `format-resume-command`| VS Code command | Returns `code` (Roo is a VS Code extension) |
+| `parse-hook` | Watcher Bridge | Parses stdin payloads into `EventJSON` with materialized transcripts |
 | `install-hooks` | No-op | Returns `0, nil` |
 | `uninstall-hooks` | No-op | Returns `nil` |
-| `are-hooks-installed` | No-op | Returns `false` |
+| `are-hooks-installed` | Status check | Returns `true` (handled via `entire-agent-roo watch`) |
 | `get-transcript-position`| UI message count | Returns number of UI messages |
 | `extract-modified-files` | Mutating tool calls | Extracts file paths from `write_to_file`, `replace_in_file`, etc. |
 | `extract-prompts` | Task / User prompts | Reads initial task prompt and subsequent user turns |
 | `extract-summary` | Completion / text | Extracts `completion_result` or last assistant text |
 | `calculate-tokens` | `api_req_started` | Aggregates token and cache counts |
+| `watch` | Watcher Sidecar | Monitors VS Code globalStorage and triggers Entire hooks |
+| `why` | Development Memory | Queries intent, decisions, reasons, and evidence for a target file |
+| `history` | Development Memory | Queries full chronological development history across sessions |
 
 ## Selected Capabilities
 | Capability | Declared | Justification |
 | :--- | :--- | :--- |
-| `hooks` | **false** | Roo Code has no native command hooks |
+| `hooks` | **true** | Enabled to allow `entire hooks roo` dispatch from the storage watcher |
 | `transcript_analyzer` | **true** | `ui_messages.json` + `api_conversation_history.json` contain structured tools & prompts |
 | `transcript_preparer` | **true** | Ingests live task data from VS Code `globalStorage` |
 | `compact_transcript` | **true** | Formats to Entire Compact Transcript format |

@@ -27,7 +27,7 @@ entire-agent-roo watch --tasks-dir /path/to/tasks --poll-interval 250 --debounce
 
 | Subcommand | Description |
 | :--- | :--- |
-| `info` | Returns agent metadata and declared capabilities (`hooks: false`) |
+| `info` | Returns agent metadata and declared capabilities (`hooks: true`) |
 | `detect` | Checks for presence of `roo` binary or task storage |
 | `get-session-id` | Extracts session/task ID |
 | `get-session-dir` | Returns session directory (`.entire/tmp/roo`) |
@@ -39,14 +39,86 @@ entire-agent-roo watch --tasks-dir /path/to/tasks --poll-interval 250 --debounce
 | `reassemble-transcript`| Reassembles transcript chunks |
 | `compact-transcript` | Produces Entire Compact Transcript JSONL |
 | `prepare-transcript` | Ingests live task files from VS Code globalStorage |
-| `format-resume-command`| Formats task resume shell command |
-| `parse-hook` | No-op (returns nil) |
+| `format-resume-command`| Formats task resume shell command (`code`) |
+| `parse-hook` | Parses watcher payloads for `session-start`, `turn-start`, `turn-end`, `session-end` |
 | `install-hooks` | No-op (returns 0, nil) |
 | `uninstall-hooks` | No-op (returns nil) |
-| `are-hooks-installed` | No-op (returns false) |
+| `are-hooks-installed` | Returns true (handled by watcher sidecar) |
 | `get-transcript-position`| Returns message count |
 | `extract-modified-files` | Parses mutating tool calls |
 | `extract-prompts` | Extracts user prompts |
 | `extract-summary` | Extracts assistant response summary |
 | `calculate-tokens` | Aggregates token metrics |
 | `watch` | Runs the storage-driven lifecycle watcher sidecar |
+| `why` | Queries development memory: intent, decisions, and evidence for a file |
+| `history` | Queries chronological development memory & turn history for a file |
+
+## Development Memory
+
+Entire stores the development context across Git checkpoints. The **Development Memory** layer organizes that context into historical intent, explicit architectural decisions, reasons, modifications, and verifiable provenance evidence without hallucinating causality.
+
+### Memory Pipeline
+
+```
+Roo Code (VS Code)
+       ↓
+entire-agent-roo watch
+       ↓
+Entire Checkpoint (git branch entire/checkpoints/v1)
+       ↓
+Development Memory (.entire/tmp/roo/*.json & task storage)
+ ├── Intent
+ ├── Decisions
+ ├── Reasons
+ ├── Changes
+ ├── Problems
+ ├── Outcomes
+ └── Evidence
+```
+
+### Querying File Provenance (`why`)
+
+To understand why a specific file exists, what problem prompted its creation/modification, and what explicit decisions were made:
+
+```bash
+entire-agent-roo why src/auth/session.ts
+```
+
+Example Output:
+```
+================================================================================
+WHY THIS FILE EXISTS: src/auth/session.ts
+================================================================================
+
+Intent:
+  Implement persistent OAuth sessions
+
+Related Decisions:
+  - Separate OAuth callback from session creation
+    Reason: Token validation requires independent retry logic.
+    Source: Session 1741243542 (Checkpoint 0c873e5)
+
+Evidence & Provenance:
+  - Entire Checkpoint: 0c873e5
+    Roo Session: 1741243542
+    Tool Action: created/modified via write_to_file
+
+Modification History:
+  [2026-09-06T06:50:00Z] Modified in session 1741243542 (Intent: "Implement persistent OAuth sessions")
+```
+
+If no explicit rationale was articulated in the agent transcript, `entire-agent-roo why` reports:
+```
+Related Decisions:
+  No explicit historical reason was captured.
+```
+*Zero-Hallucination Guarantee: Reasoning is only extracted when explicitly stated by the user or agent transcript.*
+
+### Chronological File History (`history`)
+
+To view the complete development progression of a file across sessions and turns:
+
+```bash
+entire-agent-roo history src/auth/session.ts
+```
+

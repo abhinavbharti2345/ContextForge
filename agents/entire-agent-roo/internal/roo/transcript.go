@@ -233,8 +233,7 @@ func (a *Agent) ExtractPrompts(sessionRef string, offset int) ([]string, error) 
 	}
 	if offset < len(messages) {
 		for _, msg := range messages[offset:] {
-			if (msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback")) ||
-				(msg.Type == "ask" && msg.Ask == "followup" && msg.Text != "") {
+			if msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback") {
 				if text := strings.TrimSpace(msg.Text); text != "" {
 					prompts = append(prompts, text)
 				}
@@ -461,7 +460,7 @@ func cleanFile(file string) string {
 			file = unescaped
 		}
 	}
-	return filepath.Clean(file)
+	return filepath.ToSlash(filepath.Clean(file))
 }
 
 func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
