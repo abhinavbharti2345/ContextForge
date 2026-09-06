@@ -1,0 +1,212 @@
+{
+  "main": {
+    "id": "b867ea4014f02a12",
+    "type": "split",
+    "children": [
+      {
+        "id": "ffc7550038c57ccf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a3173b42fb9ec126",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Buildathon/04 - Architecture.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "04 - Architecture"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "0981cdb641bb9245",
+    "type": "split",
+    "children": [
+      {
+        "id": "f91c2c4f4bbb9b8b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "fa0a52a781db9ae8",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "94712aea23e38097",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "f574448ec0e1c76e",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "8dcf930c7af017d7",
+    "type": "split",
+    "children": [
+      {
+        "id": "134353cff641891e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ff12bcfc05a7fe5c",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Buildathon/04 - Architecture.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "903f7fb88036d6ad",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Buildathon/04 - Architecture.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "26d945cbc2c2e7f6",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "bb509544e0ae33ca",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "016a322d749c75f4",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Buildathon/04 - Architecture.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "graph:Open graph view": false,
+      "switcher:Open quick switcher": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "a3173b42fb9ec126",
+  "lastOpenFiles": [
+    "Buildathon/03 - What We Have To Build.md",
+    "Buildathon/Buildathon — What We Actually Need To Do.md",
+    "Buildathon/13 - Technical Research.md",
+    "Buildathon/12 - Open Questions.md",
+    "Buildathon/11 - Demo Flow.md",
+    "Buildathon/10 - MVP.md",
+    "Buildathon/00 - Project Overview.md",
+    "Buildathon/09 - Team Responsibilities.md",
+    "Buildathon/01 - Hackathon Challenge.md",
+    "Buildathon/08 - Development Workflow.md",
+    "Buildathon/07 - Repository Structure.md",
+    "Buildathon/06 - External Agent Integration.md",
+    "Buildathon/05 - Context vs Git.md",
+    "Buildathon/04 - Architecture.md",
+    "Buildathon/02 - What Is Entire.md",
+    "Buildathon",
+    "Buildathon conversation..pdf",
+    "Untitled"
+  ]
+}
