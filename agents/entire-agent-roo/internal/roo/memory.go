@@ -427,7 +427,7 @@ func QueryWhy(repoRoot, filePath string, stdout io.Writer) error {
 	var matchingMemories []DevelopmentMemory
 	for _, m := range memories {
 		for _, change := range m.Changes {
-			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+			if change.Path == targetFile {
 				matchingMemories = append(matchingMemories, m)
 				break
 			}
@@ -482,7 +482,7 @@ func QueryWhy(repoRoot, filePath string, stdout io.Writer) error {
 			_, _ = fmt.Fprintf(stdout, "    Entire Checkpoint: %s\n", m.CheckpointID)
 		}
 		for _, c := range m.Changes {
-			if c.Path == targetFile || strings.HasSuffix(c.Path, targetFile) || strings.HasSuffix(targetFile, c.Path) {
+			if c.Path == targetFile {
 				_, _ = fmt.Fprintf(stdout, "    Tool Action: %s via %s\n", c.Action, c.Tool)
 			}
 		}
@@ -515,7 +515,7 @@ func QueryHistory(repoRoot, filePath string, stdout io.Writer) error {
 	var matchingMemories []DevelopmentMemory
 	for _, m := range memories {
 		for _, change := range m.Changes {
-			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+			if change.Path == targetFile {
 				matchingMemories = append(matchingMemories, m)
 				break
 			}
@@ -571,7 +571,7 @@ func QueryImpact(repoRoot, filePath string, stdout io.Writer) error {
 	var matchingMemories []DevelopmentMemory
 	for _, m := range memories {
 		for _, change := range m.Changes {
-			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+			if change.Path == targetFile {
 				matchingMemories = append(matchingMemories, m)
 				break
 			}
@@ -699,6 +699,9 @@ func extractDecisionsWithLLM(text string, apiKey string) ([]MemoryDecision, erro
 	}
 	model := os.Getenv("OPENAI_MODEL")
 	if model == "" {
+		model = os.Getenv("ANTHROPIC_MODEL")
+	}
+	if model == "" {
 		model = "gpt-4o-mini"
 	}
 
@@ -758,7 +761,11 @@ func calculateConsequences(repoRoot string, modifiedFiles []string) []string {
 	if len(modifiedFiles) == 0 {
 		return nil
 	}
-	graphPath := filepath.Join(repoRoot, "graphify-out", "graph.json")
+	outDir := os.Getenv("GRAPHIFY_OUT_DIR")
+	if outDir == "" {
+		outDir = "graphify-out"
+	}
+	graphPath := filepath.Join(repoRoot, outDir, "graph.json")
 	data, err := os.ReadFile(graphPath)
 	if err != nil {
 		return nil
