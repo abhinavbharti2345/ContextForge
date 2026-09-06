@@ -16,6 +16,26 @@ import (
 	"github.com/entireio/external-agents/agents/entire-agent-roo/internal/protocol"
 )
 
+func decodeEnvelope(data []byte) (RooTaskEnvelope, error) {
+	var env RooTaskEnvelope
+	if err := json.Unmarshal(data, &env); err == nil && (len(env.UiMessages) > 0 || env.TaskID != "") {
+		return env, nil
+	}
+	var messages []ClineMessage
+	if err := json.Unmarshal(data, &messages); err == nil && len(messages) > 0 {
+		var firstTs int64
+		if len(messages) > 0 {
+			firstTs = messages[0].Ts
+		}
+		return RooTaskEnvelope{
+			CreatedAt:  firstTs,
+			UpdatedAt:  time.Now().UnixMilli(),
+			UiMessages: messages,
+		}, nil
+	}
+	return RooTaskEnvelope{}, errors.New("cannot decode as RooTaskEnvelope")
+}
+
 func LoadSession(data []byte) (NormalizedSession, error) {
 	if len(data) == 0 {
 		return NormalizedSession{}, errors.New("empty data")
@@ -87,6 +107,12 @@ func parseJSONLSession(data []byte) (NormalizedSession, error) {
 		event.Type = EventType(evtType)
 
 		switch event.Type {
+		case EventSessionStarted:
+			event.IsTurnComplete = false
+		case EventToolResult:
+			event.IsTurnComplete = false
+		case EventFileRead:
+			event.IsTurnComplete = false
 		case EventUserPrompt:
 			event.Role = "user"
 			event.Text, _ = raw["text"].(string)
@@ -148,11 +174,15 @@ func convertEnvelopeToNormalized(env RooTaskEnvelope) NormalizedSession {
 			event.Type = EventAgentResponse
 			event.Role = "assistant"
 			event.Text = msg.Text
+			if !msg.Partial {
+				event.IsTurnComplete = true
+			}
 		} else if msg.Type == "say" && msg.Say == "completion_result" {
 			event.Type = EventAgentResponse
 			event.Role = "assistant"
 			event.Text = msg.Text
 			event.IsTurnComplete = true
+			event.IsTaskComplete = true
 		} else if msg.Say == "tool" && msg.Text != "" {
 			event.Type = EventToolCall
 			var toolCall struct {

@@ -42,6 +42,13 @@ func (m *MockHookEmitter) Reset() {
 	m.Events = nil
 }
 
+func toNormalized(taskID string, uiMessages []ClineMessage) NormalizedSession {
+	return convertEnvelopeToNormalized(RooTaskEnvelope{
+		TaskID:     taskID,
+		UiMessages: uiMessages,
+	})
+}
+
 func TestStreamingMessageDoesNotTriggerTurnEnd(t *testing.T) {
 	emitter := &MockHookEmitter{}
 	watcher := NewWatcher(WatcherOptions{Emitter: emitter})
@@ -51,7 +58,7 @@ func TestStreamingMessageDoesNotTriggerTurnEnd(t *testing.T) {
 		{Ts: 105, Type: "say", Say: "text", Text: "I am currently generating...", Partial: true},
 	}
 
-	err := watcher.ProcessTask("task-1", uiMessages, nil)
+	err := watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 	if err != nil {
 		t.Fatalf("ProcessTask failed: %v", err)
 	}
@@ -73,7 +80,7 @@ func TestToolExecutionInFlight(t *testing.T) {
 		{Ts: 110, Type: "say", Say: "api_req_started", Text: `{"tokensIn":100,"tokensOut":50}`},
 	}
 
-	err := watcher.ProcessTask("task-1", uiMessages, nil)
+	err := watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 	if err != nil {
 		t.Fatalf("ProcessTask failed: %v", err)
 	}
@@ -94,7 +101,7 @@ func TestToolApprovalWaiting(t *testing.T) {
 		{Ts: 105, Type: "ask", Ask: "command", Text: "Run rm -rf dist?"},
 	}
 
-	err := watcher.ProcessTask("task-1", uiMessages, nil)
+	err := watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 	if err != nil {
 		t.Fatalf("ProcessTask failed: %v", err)
 	}
@@ -115,12 +122,8 @@ func TestCompletedTurnAndSessionEnd(t *testing.T) {
 		{Ts: 105, Type: "say", Say: "tool", Text: `{"tool":"write_to_file","path":"app_test.go"}`},
 		{Ts: 110, Type: "say", Say: "completion_result", Text: "Tests created successfully."},
 	}
-	apiHistory := []ApiMessage{
-		{Role: "user", Content: []ApiMessagePart{{Type: "text", Text: "Add tests"}}},
-		{Role: "assistant", Content: []ApiMessagePart{{Type: "text", Text: "Done"}}},
-	}
 
-	err := watcher.ProcessTask("task-1", uiMessages, apiHistory)
+	err := watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 	if err != nil {
 		t.Fatalf("ProcessTask failed: %v", err)
 	}
@@ -145,16 +148,13 @@ func TestDeduplicationOnRepeatedWrites(t *testing.T) {
 		{Ts: 100, Type: "say", Say: "task", Text: "Refactor auth"},
 		{Ts: 105, Type: "say", Say: "text", Text: "Refactored successfully.", Partial: false},
 	}
-	apiHistory := []ApiMessage{
-		{Role: "assistant", Content: []ApiMessagePart{{Type: "text", Text: "Done"}}},
-	}
 
-	_ = watcher.ProcessTask("task-1", uiMessages, apiHistory)
+	_ = watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 	firstCount := len(emitter.GetEvents())
 
 	// Simulate repeated file-system writes of identical content
-	_ = watcher.ProcessTask("task-1", uiMessages, apiHistory)
-	_ = watcher.ProcessTask("task-1", uiMessages, apiHistory)
+	_ = watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
+	_ = watcher.ProcessTask("task-1", toNormalized("task-1", uiMessages))
 
 	secondCount := len(emitter.GetEvents())
 	if firstCount != secondCount {
@@ -175,8 +175,8 @@ func TestMultipleSimultaneousTasks(t *testing.T) {
 		{Ts: 205, Type: "say", Say: "tool", Text: `{"tool":"write_to_file","path":"feature.go"}`},
 	}
 
-	_ = watcher.ProcessTask("task-1", task1Messages, nil)
-	_ = watcher.ProcessTask("task-2", task2Messages, nil)
+	_ = watcher.ProcessTask("task-1", toNormalized("task-1", task1Messages))
+	_ = watcher.ProcessTask("task-2", toNormalized("task-2", task2Messages))
 
 	events := emitter.Events
 	var task1Events, task2Events []string

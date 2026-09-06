@@ -1,10 +1,7 @@
 package roo
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
-	"time"
 )
 
 func TestLoadSession_OldFormat(t *testing.T) {
