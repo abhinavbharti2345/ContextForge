@@ -557,6 +557,79 @@ func QueryHistory(repoRoot, filePath string, stdout io.Writer) error {
 	return nil
 }
 
+// QueryImpact prints a loud warning if a file has historical decisions or blast radius consequences.
+func QueryImpact(repoRoot, filePath string, stdout io.Writer) error {
+	if repoRoot == "" {
+		repoRoot = protocol.RepoRoot()
+	}
+	targetFile := cleanFile(filePath)
+	if targetFile == "" {
+		return fmt.Errorf("file path is required")
+	}
+
+	memories := loadAllMemories(repoRoot)
+	var matchingMemories []DevelopmentMemory
+	for _, m := range memories {
+		for _, change := range m.Changes {
+			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+				matchingMemories = append(matchingMemories, m)
+				break
+			}
+		}
+	}
+
+	if len(matchingMemories) == 0 {
+		_, _ = fmt.Fprintf(stdout, "No historical constraints.\n")
+		return nil
+	}
+
+	sort.Slice(matchingMemories, func(i, j int) bool {
+		return matchingMemories[i].Timestamp < matchingMemories[j].Timestamp
+	})
+
+	var decisions []MemoryDecision
+	var impacts []string
+	for _, m := range matchingMemories {
+		decisions = append(decisions, m.Decisions...)
+		impacts = append(impacts, m.Consequences...)
+	}
+
+	if len(decisions) == 0 && len(impacts) == 0 {
+		_, _ = fmt.Fprintf(stdout, "No historical constraints.\n")
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(stdout, "🚨 SYSTEM WARNING: You are about to edit %s\n", targetFile)
+	if len(decisions) > 0 {
+		_, _ = fmt.Fprintf(stdout, "Historical Decisions:\n")
+		for _, d := range decisions {
+			if d.Reason != "" {
+				_, _ = fmt.Fprintf(stdout, " - %s (Reason: %s)\n", d.Statement, d.Reason)
+			} else {
+				_, _ = fmt.Fprintf(stdout, " - %s\n", d.Statement)
+			}
+		}
+	}
+	if len(impacts) > 0 {
+		uniqueImpacts := make(map[string]bool)
+		for _, i := range impacts {
+			uniqueImpacts[i] = true
+		}
+		var impactList []string
+		for k := range uniqueImpacts {
+			if k != targetFile {
+				impactList = append(impactList, k)
+			}
+		}
+		sort.Strings(impactList)
+		if len(impactList) > 0 {
+			_, _ = fmt.Fprintf(stdout, "Blast Radius: Modifying this will impact %s.\n", strings.Join(impactList, ", "))
+		}
+	}
+
+	return nil
+}
+
 func loadAllMemories(repoRoot string) []DevelopmentMemory {
 	var memories []DevelopmentMemory
 
