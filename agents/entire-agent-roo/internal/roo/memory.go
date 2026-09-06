@@ -1,9 +1,11 @@
 package roo
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,6 +50,7 @@ type DevelopmentMemory struct {
 	Problems     []MemoryProblem    `json:"problems,omitempty"`
 	Outcomes     []string           `json:"outcomes,omitempty"`
 	Evidence     []MemoryEvidence   `json:"evidence"`
+	Consequences []string           `json:"consequences,omitempty"`
 }
 
 var (
@@ -213,6 +216,12 @@ func ExtractMemory(env RooTaskEnvelope, sessionID, checkpointID string) Developm
 		}
 	}
 
+	var changedFiles []string
+	for _, c := range memory.Changes {
+		changedFiles = append(changedFiles, c.Path)
+	}
+	memory.Consequences = calculateConsequences(protocol.RepoRoot(), changedFiles)
+
 	return memory
 }
 
@@ -325,10 +334,36 @@ func ExtractMemoryFromSession(session NormalizedSession, sessionID, checkpointID
 		}
 	}
 
+	var changedFiles []string
+	for _, c := range memory.Changes {
+		changedFiles = append(changedFiles, c.Path)
+	}
+	memory.Consequences = calculateConsequences(protocol.RepoRoot(), changedFiles)
+
 	return memory
 }
 
 func extractDecisionsFromText(text string, memory *DevelopmentMemory) {
+	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		decisions, err := extractDecisionsWithLLM(text, apiKey)
+		if err == nil && len(decisions) > 0 {
+			for _, d := range decisions {
+				d.Evidence = append(d.Evidence, fmt.Sprintf("Explicit LLM extracted reasoning from transcript: %q", text))
+				exists := false
+				for _, memD := range memory.Decisions {
+					if memD.Statement == d.Statement {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					memory.Decisions = append(memory.Decisions, d)
+				}
+			}
+			return
+		}
+	}
+
 	matches := reDecidedBecause.FindAllStringSubmatch(text, -1)
 	for _, m := range matches {
 		if len(m) >= 3 {
@@ -513,6 +548,9 @@ func QueryHistory(repoRoot, filePath string, stdout io.Writer) error {
 		if len(m.Outcomes) > 0 {
 			_, _ = fmt.Fprintf(stdout, "  Outcome:  %s\n", strings.Join(m.Outcomes, "; "))
 		}
+		if len(m.Consequences) > 0 {
+			_, _ = fmt.Fprintf(stdout, "  Impacts:  %s\n", strings.Join(m.Consequences, ", "))
+		}
 		_, _ = fmt.Fprintf(stdout, "--------------------------------------------------------------------------------\n")
 	}
 
@@ -579,4 +617,127 @@ func loadAllMemories(repoRoot string) []DevelopmentMemory {
 	}
 
 	return memories
+}
+
+func extractDecisionsWithLLM(text string, apiKey string) ([]MemoryDecision, error) {
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	model := os.Getenv("OPENAI_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+
+	prompt := `Extract architectural decisions and their reasons from the following agent response.
+Return a JSON object with a 'decisions' array, containing 'statement' and 'reason' string fields.
+If there are no decisions, return an empty array.
+Text:
+` + text
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"model": model,
+		"response_format": map[string]string{"type": "json_object"},
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": prompt},
+		},
+	})
+
+	req, _ := http.NewRequest("POST", baseURL+"/chat/completions", bytes.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code: %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	if len(res.Choices) == 0 {
+		return nil, fmt.Errorf("no choices")
+	}
+
+	var out struct {
+		Decisions []MemoryDecision `json:"decisions"`
+	}
+	if err := json.Unmarshal([]byte(res.Choices[0].Message.Content), &out); err != nil {
+		return nil, err
+	}
+	return out.Decisions, nil
+}
+
+func calculateConsequences(repoRoot string, modifiedFiles []string) []string {
+	if len(modifiedFiles) == 0 {
+		return nil
+	}
+	graphPath := filepath.Join(repoRoot, "graphify-out", "graph.json")
+	data, err := os.ReadFile(graphPath)
+	if err != nil {
+		return nil
+	}
+	var graph struct {
+		Nodes []struct {
+			Id         string `json:"id"`
+			SourceFile string `json:"source_file"`
+		} `json:"nodes"`
+		Links []struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+		} `json:"links"`
+	}
+	if err := json.Unmarshal(data, &graph); err != nil {
+		return nil
+	}
+
+	modSet := make(map[string]bool)
+	for _, f := range modifiedFiles {
+		modSet[f] = true
+	}
+
+	modNodes := make(map[string]bool)
+	for _, n := range graph.Nodes {
+		if modSet[n.SourceFile] {
+			modNodes[n.Id] = true
+		}
+	}
+
+	consequenceSet := make(map[string]bool)
+	for _, l := range graph.Links {
+		// In Graphify, source -> target means source depends on target (calls it, etc)
+		// So if target is modified, source is impacted.
+		if modNodes[l.Target] && !modNodes[l.Source] {
+			for _, n := range graph.Nodes {
+				if n.Id == l.Source {
+					if n.SourceFile != "" {
+						consequenceSet[n.SourceFile] = true
+					}
+					break
+				}
+			}
+		}
+	}
+
+	var res []string
+	for k := range consequenceSet {
+		if !modSet[k] {
+			res = append(res, k)
+		}
+	}
+	sort.Strings(res)
+	return res
 }
