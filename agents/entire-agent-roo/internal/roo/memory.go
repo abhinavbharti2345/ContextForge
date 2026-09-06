@@ -235,6 +235,21 @@ func ExtractMemoryFromSession(session NormalizedSession, sessionID, checkpointID
 		Evidence:     []MemoryEvidence{},
 	}
 
+	// 0. Extract CheckpointID if not provided
+	if memory.CheckpointID == "" {
+		for _, evt := range session.Events {
+			if evt.Type == EventCheckpoint {
+				var rawData struct {
+					CheckpointID string `json:"checkpoint_id"`
+				}
+				if err := json.Unmarshal(evt.Raw, &rawData); err == nil && rawData.CheckpointID != "" {
+					memory.CheckpointID = rawData.CheckpointID
+					break
+				}
+			}
+		}
+	}
+
 	// 1. Extract Intent
 	for _, evt := range session.Events {
 		if evt.Type == EventUserPrompt {

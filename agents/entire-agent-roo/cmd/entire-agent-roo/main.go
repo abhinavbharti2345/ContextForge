@@ -76,6 +76,19 @@ func main() {
 			fatalf("usage: entire-agent-roo history <file>")
 		}
 		err = roo.QueryHistory(protocol.RepoRoot(), os.Args[2], os.Stdout)
+	case "detect-context-gap":
+		if len(os.Args) < 3 {
+			fatalf("usage: entire-agent-roo detect-context-gap <commit-sha>")
+		}
+		gap, err := roo.DetectContextGap(protocol.RepoRoot(), os.Args[2])
+		if err != nil {
+			fatalf("failed to detect context gap: %v", err)
+		}
+		if gap == nil {
+			fmt.Println("No context gap detected (Commit was observed or matches Entire footprint).")
+		} else {
+			fmt.Println(roo.FormatContextGap(gap))
+		}
 	default:
 		fatalf("unknown subcommand: %s", os.Args[1])
 	}

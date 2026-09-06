@@ -183,6 +183,10 @@
   },
   "active": "7d4726f40934939c",
   "lastOpenFiles": [
+    "UNOBSERVED_CHANGE_DEMO.md",
+    "agents/entire-agent-roo/internal/roo/context_gap_test.go",
+    "agents/entire-agent-roo/internal/roo/context_gap.go",
+    "UNOBSERVED_CHANGE_PLAN.md",
     "JUDGE_WALKTHROUGH.md",
     "TRACK3_E2E.md",
     "agents/entire-agent-roo/test_fixture.go",
@@ -194,8 +198,6 @@
     "graphify-out/cache/ast/v0.9.14/afa3d9e6ba5d764b84294793835f87616a9ff57900657d727df309767dccffce.json",
     "graphify-out/cache/ast/v0.9.14/04d7d60d6ccabe33af04a5e68429b24acae66461dd188c8efbb1c64b1855b183.json",
     "graphify-out/cache/ast/v0.9.14/dd2e85c4228cd20a137d9903300096a776775fc5761b2d39db40348631f00ee9.json",
-    "graphify-out/cache/ast/v0.9.14/34c022e60fd22a8e5afc14b6389ff848a3e526083b58c26541cfafa08e6836f4.json",
-    "graphify-out/cache/ast/v0.9.14/ce89f2eb5215779d6ccc16b2387e56ab7acda2cca98fa5c9348512d95cee6495.json",
-    "graphify-out/cache/ast/v0.9.14/3b8514a3d0696d677a526d83a078d3c6357c0a5ca74c538a3cbb6e15e545c479.json"
+    "graphify-out/cache/ast/v0.9.14/34c022e60fd22a8e5afc14b6389ff848a3e526083b58c26541cfafa08e6836f4.json"
   ]
 }
