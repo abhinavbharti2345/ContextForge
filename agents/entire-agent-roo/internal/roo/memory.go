@@ -427,7 +427,7 @@ func QueryWhy(repoRoot, filePath string, stdout io.Writer) error {
 	var matchingMemories []DevelopmentMemory
 	for _, m := range memories {
 		for _, change := range m.Changes {
-			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+			if change.Path == targetFile {
 				matchingMemories = append(matchingMemories, m)
 				break
 			}
@@ -482,7 +482,7 @@ func QueryWhy(repoRoot, filePath string, stdout io.Writer) error {
 			_, _ = fmt.Fprintf(stdout, "    Entire Checkpoint: %s\n", m.CheckpointID)
 		}
 		for _, c := range m.Changes {
-			if c.Path == targetFile || strings.HasSuffix(c.Path, targetFile) || strings.HasSuffix(targetFile, c.Path) {
+			if c.Path == targetFile {
 				_, _ = fmt.Fprintf(stdout, "    Tool Action: %s via %s\n", c.Action, c.Tool)
 			}
 		}
@@ -515,7 +515,7 @@ func QueryHistory(repoRoot, filePath string, stdout io.Writer) error {
 	var matchingMemories []DevelopmentMemory
 	for _, m := range memories {
 		for _, change := range m.Changes {
-			if change.Path == targetFile || strings.HasSuffix(change.Path, targetFile) || strings.HasSuffix(targetFile, change.Path) {
+			if change.Path == targetFile {
 				matchingMemories = append(matchingMemories, m)
 				break
 			}
@@ -552,6 +552,79 @@ func QueryHistory(repoRoot, filePath string, stdout io.Writer) error {
 			_, _ = fmt.Fprintf(stdout, "  Impacts:  %s\n", strings.Join(m.Consequences, ", "))
 		}
 		_, _ = fmt.Fprintf(stdout, "--------------------------------------------------------------------------------\n")
+	}
+
+	return nil
+}
+
+// QueryImpact prints a loud warning if a file has historical decisions or blast radius consequences.
+func QueryImpact(repoRoot, filePath string, stdout io.Writer) error {
+	if repoRoot == "" {
+		repoRoot = protocol.RepoRoot()
+	}
+	targetFile := cleanFile(filePath)
+	if targetFile == "" {
+		return fmt.Errorf("file path is required")
+	}
+
+	memories := loadAllMemories(repoRoot)
+	var matchingMemories []DevelopmentMemory
+	for _, m := range memories {
+		for _, change := range m.Changes {
+			if change.Path == targetFile {
+				matchingMemories = append(matchingMemories, m)
+				break
+			}
+		}
+	}
+
+	if len(matchingMemories) == 0 {
+		_, _ = fmt.Fprintf(stdout, "No historical constraints.\n")
+		return nil
+	}
+
+	sort.Slice(matchingMemories, func(i, j int) bool {
+		return matchingMemories[i].Timestamp < matchingMemories[j].Timestamp
+	})
+
+	var decisions []MemoryDecision
+	var impacts []string
+	for _, m := range matchingMemories {
+		decisions = append(decisions, m.Decisions...)
+		impacts = append(impacts, m.Consequences...)
+	}
+
+	if len(decisions) == 0 && len(impacts) == 0 {
+		_, _ = fmt.Fprintf(stdout, "No historical constraints.\n")
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(stdout, "🚨 SYSTEM WARNING: You are about to edit %s\n", targetFile)
+	if len(decisions) > 0 {
+		_, _ = fmt.Fprintf(stdout, "Historical Decisions:\n")
+		for _, d := range decisions {
+			if d.Reason != "" {
+				_, _ = fmt.Fprintf(stdout, " - %s (Reason: %s)\n", d.Statement, d.Reason)
+			} else {
+				_, _ = fmt.Fprintf(stdout, " - %s\n", d.Statement)
+			}
+		}
+	}
+	if len(impacts) > 0 {
+		uniqueImpacts := make(map[string]bool)
+		for _, i := range impacts {
+			uniqueImpacts[i] = true
+		}
+		var impactList []string
+		for k := range uniqueImpacts {
+			if k != targetFile {
+				impactList = append(impactList, k)
+			}
+		}
+		sort.Strings(impactList)
+		if len(impactList) > 0 {
+			_, _ = fmt.Fprintf(stdout, "Blast Radius: Modifying this will impact %s.\n", strings.Join(impactList, ", "))
+		}
 	}
 
 	return nil
@@ -626,6 +699,9 @@ func extractDecisionsWithLLM(text string, apiKey string) ([]MemoryDecision, erro
 	}
 	model := os.Getenv("OPENAI_MODEL")
 	if model == "" {
+		model = os.Getenv("ANTHROPIC_MODEL")
+	}
+	if model == "" {
 		model = "gpt-4o-mini"
 	}
 
@@ -685,7 +761,11 @@ func calculateConsequences(repoRoot string, modifiedFiles []string) []string {
 	if len(modifiedFiles) == 0 {
 		return nil
 	}
-	graphPath := filepath.Join(repoRoot, "graphify-out", "graph.json")
+	outDir := os.Getenv("GRAPHIFY_OUT_DIR")
+	if outDir == "" {
+		outDir = "graphify-out"
+	}
+	graphPath := filepath.Join(repoRoot, outDir, "graph.json")
 	data, err := os.ReadFile(graphPath)
 	if err != nil {
 		return nil

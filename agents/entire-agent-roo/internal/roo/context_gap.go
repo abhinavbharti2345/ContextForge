@@ -99,7 +99,7 @@ func DetectContextGap(repoRoot, commitSHA string) (*ContextGap, error) {
 		intersects := false
 		for _, memChange := range m.Changes {
 			for _, gitFile := range changedFiles {
-				if memChange.Path == gitFile || strings.HasSuffix(memChange.Path, gitFile) || strings.HasSuffix(gitFile, memChange.Path) {
+				if memChange.Path == gitFile {
 					intersects = true
 					break
 				}

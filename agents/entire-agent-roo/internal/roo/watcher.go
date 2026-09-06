@@ -58,6 +58,7 @@ type TaskWatcherState struct {
 	TaskID               string
 	SessionStarted       bool
 	LastEmittedTurnIndex int
+	LastEmittedToolIndex int
 	LastEmittedPrompt    string
 	InFlight             bool
 	SessionEnded         bool
@@ -184,6 +185,7 @@ func (w *Watcher) BootstrapExistingTasks() {
 			TaskID:               taskID,
 			SessionStarted:       true,
 			LastEmittedTurnIndex: lastPromptIdx,
+			LastEmittedToolIndex: len(session.Events) - 1, // Assume existing tools were already emitted
 			InFlight:             inFlight,
 			SessionEnded:         isTaskDone,
 			LastSettledSignature: settledSig,
@@ -201,6 +203,7 @@ func (w *Watcher) ProcessTask(taskID string, session NormalizedSession) error {
 		state = &TaskWatcherState{
 			TaskID:               taskID,
 			LastEmittedTurnIndex: -1,
+			LastEmittedToolIndex: -1,
 		}
 		w.states[taskID] = state
 	}
@@ -245,6 +248,26 @@ func (w *Watcher) ProcessTask(taskID string, session NormalizedSession) error {
 			WorkingDir: w.repoRoot,
 		}
 		_ = w.emitter.Emit("turn-start", payload)
+	}
+
+	// 2.5 Tool Call detection
+	for {
+		newToolIndex, toolName, toolPath, hasNewTool := DetectNewToolCall(session, state.LastEmittedToolIndex)
+		if !hasNewTool {
+			break
+		}
+		state.LastEmittedToolIndex = newToolIndex
+		payload := RooHookPayload{
+			Event:      "PreToolUse",
+			HookEvent:  "PreToolUse",
+			SessionID:  taskID,
+			TaskID:     taskID,
+			SessionRef: sessionRef,
+			ToolName:   toolName,
+			Message:    toolPath,
+			WorkingDir: w.repoRoot,
+		}
+		_ = w.emitter.Emit("pre-tool-use", payload)
 	}
 
 	// 3. Turn completion check
@@ -340,6 +363,25 @@ func DetectNewPrompt(session NormalizedSession, lastTurnIndex int) (int, string,
 		}
 	}
 	return -1, "", false
+}
+
+func DetectNewToolCall(session NormalizedSession, lastToolIndex int) (int, string, string, bool) {
+	events := session.Events
+	start := lastToolIndex + 1
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(events); i++ {
+		msg := events[i]
+		if msg.Type == EventToolCall && isMutatingToolName(msg.ToolName) {
+			path := ""
+			if len(msg.ModifiedFiles) > 0 {
+				path = msg.ModifiedFiles[0]
+			}
+			return i, msg.ToolName, path, true
+		}
+	}
+	return -1, "", "", false
 }
 
 func IsTurnCompleted(session NormalizedSession) bool {

@@ -26,6 +26,7 @@ func (a *Agent) Info() protocol.InfoResponse {
 		HookNames: []string{
 			"session-start",
 			"turn-start",
+			"pre-tool-use",
 			"turn-end",
 			"session-end",
 		},
