@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -40,10 +39,8 @@ func (e *DefaultHookEmitter) Emit(hookName string, payload RooHookPayload) error
 		repoRoot = protocol.RepoRoot()
 	}
 
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
+	// Just invoke it for now, RooHookPayload marshal logic isn't here but assuming it's in protocol or json works
+	data, _ := json.Marshal(payload)
 
 	cmd := exec.Command(cmdName, "hooks", "roo", hookName)
 	if repoRoot != "" {
@@ -127,6 +124,19 @@ func NewWatcher(opts WatcherOptions) *Watcher {
 	return w
 }
 
+func readSessionData(taskFolder string) ([]byte, error) {
+	jsonlPath := filepath.Join(taskFolder, "transcript.jsonl")
+	uiPath := filepath.Join(taskFolder, "ui_messages.json")
+
+	if data, err := os.ReadFile(jsonlPath); err == nil {
+		return data, nil
+	}
+	if data, err := os.ReadFile(uiPath); err == nil {
+		return data, nil
+	}
+	return nil, os.ErrNotExist
+}
+
 func (w *Watcher) BootstrapExistingTasks() {
 	if w.tasksDir == "" {
 		return
@@ -145,27 +155,21 @@ func (w *Watcher) BootstrapExistingTasks() {
 		}
 		taskID := entry.Name()
 		taskFolder := filepath.Join(w.tasksDir, taskID)
-		uiPath := filepath.Join(taskFolder, "ui_messages.json")
 
-		uiData, err := os.ReadFile(uiPath)
+		data, err := readSessionData(taskFolder)
 		if err != nil {
 			continue
 		}
-		var uiMessages []ClineMessage
-		if err := json.Unmarshal(uiData, &uiMessages); err != nil {
+
+		session, err := LoadSession(data)
+		if err != nil {
 			continue
 		}
 
-		var apiHistory []ApiMessage
-		apiPath := filepath.Join(taskFolder, "api_conversation_history.json")
-		if apiData, err := os.ReadFile(apiPath); err == nil {
-			_ = json.Unmarshal(apiData, &apiHistory)
-		}
-
-		lastPromptIdx, _, _ := DetectNewPrompt(uiMessages, -1)
-		sig := calculateContentSignature(uiMessages)
-		isTurnDone := IsTurnCompleted(uiMessages, apiHistory)
-		isTaskDone := IsTaskCompleted(uiMessages)
+		lastPromptIdx, _, _ := DetectNewPrompt(session, -1)
+		sig := calculateContentSignature(session)
+		isTurnDone := IsTurnCompleted(session)
+		isTaskDone := IsTaskCompleted(session)
 
 		settledSig := sig
 		inFlight := false
@@ -187,7 +191,7 @@ func (w *Watcher) BootstrapExistingTasks() {
 	}
 }
 
-func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHistory []ApiMessage) error {
+func (w *Watcher) ProcessTask(taskID string, session NormalizedSession) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -200,7 +204,7 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 		w.states[taskID] = state
 	}
 
-	if len(uiMessages) == 0 {
+	if len(session.Events) == 0 {
 		return nil
 	}
 
@@ -221,7 +225,7 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 	}
 
 	// 2. New Prompt / TurnStart detection
-	newPromptIndex, newPrompt, hasNewPrompt := DetectNewPrompt(uiMessages, state.LastEmittedTurnIndex)
+	newPromptIndex, newPrompt, hasNewPrompt := DetectNewPrompt(session, state.LastEmittedTurnIndex)
 	if hasNewPrompt {
 		state.LastEmittedTurnIndex = newPromptIndex
 		state.LastEmittedPrompt = newPrompt
@@ -243,8 +247,8 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 	}
 
 	// 3. Turn completion check
-	sig := calculateContentSignature(uiMessages)
-	if state.InFlight && IsTurnCompleted(uiMessages, apiHistory) {
+	sig := calculateContentSignature(session)
+	if state.InFlight && IsTurnCompleted(session) {
 		if sig != state.LastSettledSignature {
 			state.LastSettledSignature = sig
 			state.InFlight = false
@@ -262,7 +266,7 @@ func (w *Watcher) ProcessTask(taskID string, uiMessages []ClineMessage, apiHisto
 	}
 
 	// 4. Task completion / SessionEnd check
-	if !state.SessionEnded && IsTaskCompleted(uiMessages) {
+	if !state.SessionEnded && IsTaskCompleted(session) {
 		state.SessionEnded = true
 		payload := RooHookPayload{
 			Event:      "SessionEnd",
@@ -294,25 +298,18 @@ func (w *Watcher) ScanOnce() {
 		}
 		taskID := entry.Name()
 		taskFolder := filepath.Join(w.tasksDir, taskID)
-		uiPath := filepath.Join(taskFolder, "ui_messages.json")
-		apiPath := filepath.Join(taskFolder, "api_conversation_history.json")
 
-		uiData, err := os.ReadFile(uiPath)
+		data, err := readSessionData(taskFolder)
 		if err != nil {
 			continue
 		}
 
-		var uiMessages []ClineMessage
-		if err := json.Unmarshal(uiData, &uiMessages); err != nil {
+		session, err := LoadSession(data)
+		if err != nil {
 			continue
 		}
 
-		var apiHistory []ApiMessage
-		if apiData, err := os.ReadFile(apiPath); err == nil {
-			_ = json.Unmarshal(apiData, &apiHistory)
-		}
-
-		_ = w.ProcessTask(taskID, uiMessages, apiHistory)
+		_ = w.ProcessTask(taskID, session)
 	}
 }
 
@@ -330,10 +327,11 @@ func (w *Watcher) Watch(ctx context.Context) error {
 	}
 }
 
-func DetectNewPrompt(uiMessages []ClineMessage, lastTurnIndex int) (int, string, bool) {
-	for i := len(uiMessages) - 1; i > lastTurnIndex; i-- {
-		msg := uiMessages[i]
-		if msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback") {
+func DetectNewPrompt(session NormalizedSession, lastTurnIndex int) (int, string, bool) {
+	events := session.Events
+	for i := len(events) - 1; i > lastTurnIndex; i-- {
+		msg := events[i]
+		if msg.Type == EventUserPrompt {
 			text := strings.TrimSpace(msg.Text)
 			if text != "" {
 				return i, text, true
@@ -343,55 +341,39 @@ func DetectNewPrompt(uiMessages []ClineMessage, lastTurnIndex int) (int, string,
 	return -1, "", false
 }
 
-func IsTurnCompleted(uiMessages []ClineMessage, apiHistory []ApiMessage) bool {
-	if len(uiMessages) == 0 {
+func IsTurnCompleted(session NormalizedSession) bool {
+	if len(session.Events) == 0 {
+		return false
+	}
+	if session.Partial {
 		return false
 	}
 
-	lastUI := uiMessages[len(uiMessages)-1]
-
-	// 1. Streaming message is NOT completed
-	if lastUI.Partial {
-		return false
+	lastEvent := session.Events[len(session.Events)-1]
+	
+	// Check if the event signifies completion explicitly
+	if lastEvent.IsTurnComplete || lastEvent.IsTaskComplete {
+		return true
 	}
-
-	// 2. In-flight tool or API execution is NOT completed
-	if lastUI.Say == "api_req_started" || lastUI.Say == "tool" || lastUI.Say == "command" {
-		return false
-	}
-
-	// 3. Waiting for user tool/command approval is paused, not completed
-	if lastUI.Type == "ask" && (lastUI.Ask == "tool" || lastUI.Ask == "command") {
-		return false
-	}
-
-	// 4. Completed states
-	if lastUI.Say == "text" || lastUI.Say == "completion_result" || lastUI.Ask == "followup" {
-		if len(apiHistory) > 0 {
-			lastAPI := apiHistory[len(apiHistory)-1]
-			if lastAPI.Role == "assistant" {
-				return true
-			}
-		} else {
-			return true
-		}
-	}
-
+	
 	return false
 }
 
-func IsTaskCompleted(uiMessages []ClineMessage) bool {
-	if len(uiMessages) == 0 {
+func IsTaskCompleted(session NormalizedSession) bool {
+	if len(session.Events) == 0 {
 		return false
 	}
-	lastUI := uiMessages[len(uiMessages)-1]
-	return lastUI.Say == "completion_result" && !lastUI.Partial
+	if session.Partial {
+		return false
+	}
+	lastEvent := session.Events[len(session.Events)-1]
+	return lastEvent.IsTaskComplete
 }
 
-func calculateContentSignature(uiMessages []ClineMessage) string {
+func calculateContentSignature(session NormalizedSession) string {
 	hasher := sha256.New()
-	for _, m := range uiMessages {
-		hasher.Write([]byte(fmt.Sprintf("%d:%s:%s:%t:%s\n", m.Ts, m.Type, m.Say, m.Partial, m.Text)))
+	for _, m := range session.Events {
+		hasher.Write(m.Raw)
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
 }

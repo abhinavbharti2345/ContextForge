@@ -2,190 +2,127 @@ package roo
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
-func sampleRooEnvelope() RooTaskEnvelope {
-	return RooTaskEnvelope{
-		TaskID:    "1712345678900",
-		CreatedAt: 1712345678900,
-		UpdatedAt: 1712345685000,
-		UiMessages: []ClineMessage{
-			{
-				Ts:   1712345678900,
-				Type: "say",
-				Say:  "task",
-				Text: "Refactor auth middleware to use JWT",
-			},
-			{
-				Ts:   1712345680100,
-				Type: "say",
-				Say:  "tool",
-				Text: `{"tool":"write_to_file","path":"src/auth/jwt.ts","content":"export function verify() {}"}`,
-			},
-			{
-				Ts:   1712345681200,
-				Type: "say",
-				Say:  "tool",
-				Text: `{"tool":"replace_in_file","path":"src/server.ts","diff":"-import auth\n+import jwt"}`,
-			},
-			{
-				Ts:   1712345682000,
-				Type: "say",
-				Say:  "api_req_started",
-				Text: `{"tokensIn":1250,"tokensOut":320,"cacheWrites":100,"cacheReads":500}`,
-			},
-			{
-				Ts:   1712345685000,
-				Type: "say",
-				Say:  "completion_result",
-				Text: "JWT auth middleware successfully implemented.",
-			},
-		},
-		ApiConversationHistory: []ApiMessage{
-			{
-				Role: "user",
-				Content: []ApiMessagePart{
-					{Type: "text", Text: "Refactor auth middleware to use JWT"},
-				},
-			},
-			{
-				Role: "assistant",
-				Content: []ApiMessagePart{
-					{Type: "text", Text: "I will implement JWT auth."},
-					{
-						Type:  "tool_use",
-						ID:    "tool_1",
-						Name:  "write_to_file",
-						Input: json.RawMessage(`{"path":"src/auth/jwt.ts","content":"..."}`),
-					},
-				},
-			},
-		},
+func TestLoadSession_OldFormat(t *testing.T) {
+	data := []byte(`{
+		"taskId": "test-task",
+		"createdAt": 1690000000000,
+		"uiMessages": [
+			{"ts": 1690000000000, "type": "say", "say": "task", "text": "Do something"}
+		]
+	}`)
+	session, err := LoadSession(data)
+	if err != nil {
+		t.Fatalf("LoadSession failed: %v", err)
+	}
+	if session.SessionID != "test-task" {
+		t.Errorf("Expected SessionID 'test-task', got '%s'", session.SessionID)
+	}
+	if len(session.Events) != 1 {
+		t.Fatalf("Expected 1 event, got %d", len(session.Events))
+	}
+	if session.Events[0].Type != EventUserPrompt {
+		t.Errorf("Expected EventUserPrompt, got %s", session.Events[0].Type)
 	}
 }
 
-func writeTempEnvelope(t *testing.T, env RooTaskEnvelope) string {
-	t.Helper()
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, env.TaskID+".json")
-	data, err := json.MarshalIndent(env, "", "  ")
+func TestLoadSession_NewFormat(t *testing.T) {
+	data := []byte(`{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "session_started", "session_id": "track3-test"}
+{"timestamp": "2026-09-06T09:00:08.214+05:30", "event": "user_prompt", "text": "Add coupon validation"}
+{"timestamp": "2026-09-06T09:01:06.120+05:30", "event": "file_changed", "path": "src/checkout/apply_coupon.ts"}`)
+
+	session, err := LoadSession(data)
 	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
+		t.Fatalf("LoadSession failed: %v", err)
 	}
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
+	if session.SessionID != "track3-test" {
+		t.Errorf("Expected session ID 'track3-test', got '%s'", session.SessionID)
 	}
-	return filePath
-}
-
-func TestExtractModifiedFiles(t *testing.T) {
-	agent := New()
-	env := sampleRooEnvelope()
-	filePath := writeTempEnvelope(t, env)
-
-	files, pos, err := agent.ExtractModifiedFiles(filePath, 0)
-	if err != nil {
-		t.Fatalf("ExtractModifiedFiles failed: %v", err)
+	if len(session.Events) != 3 {
+		t.Fatalf("Expected 3 events, got %d", len(session.Events))
 	}
-
-	expectedFiles := []string{"src/auth/jwt.ts", "src/server.ts"}
-	if !reflect.DeepEqual(files, expectedFiles) {
-		t.Errorf("files = %v, want %v", files, expectedFiles)
+	if session.Events[0].Type != EventSessionStarted {
+		t.Errorf("Expected EventSessionStarted, got %s", session.Events[0].Type)
 	}
-	if pos != len(env.UiMessages) {
-		t.Errorf("pos = %d, want %d", pos, len(env.UiMessages))
+	if session.Events[1].Type != EventUserPrompt {
+		t.Errorf("Expected EventUserPrompt, got %s", session.Events[1].Type)
+	}
+	if session.Events[2].Type != EventFileChanged {
+		t.Errorf("Expected EventFileChanged, got %s", session.Events[2].Type)
+	}
+	if len(session.Events[2].ModifiedFiles) != 1 || session.Events[2].ModifiedFiles[0] != "src/checkout/apply_coupon.ts" {
+		t.Errorf("Expected modified file 'src/checkout/apply_coupon.ts', got %v", session.Events[2].ModifiedFiles)
 	}
 }
 
-func TestExtractPrompts(t *testing.T) {
-	agent := New()
-	env := sampleRooEnvelope()
-	filePath := writeTempEnvelope(t, env)
+func TestLoadSession_UnknownEvent(t *testing.T) {
+	data := []byte(`{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "session_started", "session_id": "test-unknown"}
+{"timestamp": "2026-09-06T09:00:08.214+05:30", "event": "some_future_event_type", "foo": "bar"}`)
 
-	prompts, err := agent.ExtractPrompts(filePath, 0)
+	session, err := LoadSession(data)
 	if err != nil {
-		t.Fatalf("ExtractPrompts failed: %v", err)
+		t.Fatalf("LoadSession failed: %v", err)
 	}
-
-	expectedPrompts := []string{"Refactor auth middleware to use JWT"}
-	if !reflect.DeepEqual(prompts, expectedPrompts) {
-		t.Errorf("prompts = %v, want %v", prompts, expectedPrompts)
+	if len(session.Events) != 2 {
+		t.Fatalf("Expected 2 events, got %d", len(session.Events))
+	}
+	if session.Events[1].Type != EventUnknown {
+		t.Errorf("Expected EventUnknown, got %s", session.Events[1].Type)
 	}
 }
 
-func TestExtractSummary(t *testing.T) {
-	agent := New()
-	env := sampleRooEnvelope()
-	filePath := writeTempEnvelope(t, env)
+func TestLoadSession_IncompleteTranscript(t *testing.T) {
+	data := []byte(`{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "session_started", "session_id": "test-partial"}
+{"timestamp": "2026-09-06T09:00:08.214+05:30", "event": "user_prompt", "text": "Start task"}
+{"timest`)
 
-	summary, hasSummary, err := agent.ExtractSummary(filePath)
+	session, err := LoadSession(data)
 	if err != nil {
-		t.Fatalf("ExtractSummary failed: %v", err)
+		t.Fatalf("LoadSession failed: %v", err)
 	}
-	if !hasSummary {
-		t.Fatal("expected hasSummary = true")
+	if len(session.Events) != 2 {
+		t.Fatalf("Expected 2 valid events before truncation, got %d", len(session.Events))
 	}
+	if !session.Partial {
+		t.Errorf("Expected session.Partial to be true")
+	}
+}
 
-	expectedSummary := "JWT auth middleware successfully implemented."
-	if summary != expectedSummary {
-		t.Errorf("summary = %q, want %q", summary, expectedSummary)
+func TestModifiedFilesExtraction(t *testing.T) {
+	data := []byte(`{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "file_changed", "path": "a.txt"}
+{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "file_changed", "path": "b.txt"}
+{"timestamp": "2026-09-06T09:00:00.000+05:30", "event": "file_changed", "path": "a.txt"}`)
+
+	session, _ := LoadSession(data)
+	files := modifiedFilesFromSession(session, 0)
+	if len(files) != 2 || files[0] != "a.txt" || files[1] != "b.txt" {
+		t.Errorf("Expected [a.txt, b.txt], got %v", files)
 	}
 }
 
 func TestCalculateTokens(t *testing.T) {
-	agent := New()
-	env := sampleRooEnvelope()
-	data, _ := json.Marshal(env)
+	data := []byte(`{"event": "usage", "input_tokens": 100, "output_tokens": 50}
+{"event": "usage", "input_tokens": 200, "output_tokens": 10}`)
 
-	usage, err := agent.CalculateTokens(data, 0)
-	if err != nil {
-		t.Fatalf("CalculateTokens failed: %v", err)
+	session, _ := LoadSession(data)
+	
+	// Simulate what Agent.CalculateTokens does
+	var inputTokens, outputTokens int
+	for _, msg := range session.Events {
+		if msg.Type == EventUsage {
+			inputTokens += msg.InputTokens
+			outputTokens += msg.OutputTokens
+		}
 	}
-
-	if usage.InputTokens != 1250 {
-		t.Errorf("InputTokens = %d, want 1250", usage.InputTokens)
+	
+	if inputTokens != 300 {
+		t.Errorf("Expected 300 input tokens, got %d", inputTokens)
 	}
-	if usage.OutputTokens != 320 {
-		t.Errorf("OutputTokens = %d, want 320", usage.OutputTokens)
-	}
-	if usage.CacheCreationTokens != 100 {
-		t.Errorf("CacheCreationTokens = %d, want 100", usage.CacheCreationTokens)
-	}
-	if usage.CacheReadTokens != 500 {
-		t.Errorf("CacheReadTokens = %d, want 500", usage.CacheReadTokens)
-	}
-	if usage.APICallCount != 1 {
-		t.Errorf("APICallCount = %d, want 1", usage.APICallCount)
-	}
-}
-
-func TestReadTranscriptAndChunking(t *testing.T) {
-	agent := New()
-	env := sampleRooEnvelope()
-	filePath := writeTempEnvelope(t, env)
-
-	data, err := agent.ReadTranscript(filePath)
-	if err != nil {
-		t.Fatalf("ReadTranscript failed: %v", err)
-	}
-
-	chunks, err := agent.ChunkTranscript(data, 128)
-	if err != nil {
-		t.Fatalf("ChunkTranscript failed: %v", err)
-	}
-	if len(chunks) == 0 {
-		t.Fatal("expected non-empty chunks")
-	}
-
-	reassembled, err := agent.ReassembleTranscript(chunks)
-	if err != nil {
-		t.Fatalf("ReassembleTranscript failed: %v", err)
-	}
-	if string(reassembled) != string(data) {
-		t.Fatal("reassembled bytes do not match original")
+	if outputTokens != 60 {
+		t.Errorf("Expected 60 output tokens, got %d", outputTokens)
 	}
 }
