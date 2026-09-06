@@ -183,6 +183,7 @@
   },
   "active": "7d4726f40934939c",
   "lastOpenFiles": [
+    "PITCH_SLIDES.md",
     "go.mod",
     "Buildathon.md",
     "UNOBSERVED_CHANGE_DEMO.md",
@@ -199,7 +200,6 @@
     "graphify-out/cache/ast/v0.9.14/8af464f48f9abc1072f205614e7d47b9c3d0078c5477a33a1aaeffa7cacdf277.json",
     "graphify-out/cache/ast/v0.9.14/afa3d9e6ba5d764b84294793835f87616a9ff57900657d727df309767dccffce.json",
     "graphify-out/cache/ast/v0.9.14/04d7d60d6ccabe33af04a5e68429b24acae66461dd188c8efbb1c64b1855b183.json",
-    "graphify-out/cache/ast/v0.9.14/dd2e85c4228cd20a137d9903300096a776775fc5761b2d39db40348631f00ee9.json",
-    "graphify-out/cache/ast/v0.9.14/34c022e60fd22a8e5afc14b6389ff848a3e526083b58c26541cfafa08e6836f4.json"
+    "graphify-out/cache/ast/v0.9.14/dd2e85c4228cd20a137d9903300096a776775fc5761b2d39db40348631f00ee9.json"
   ]
 }
