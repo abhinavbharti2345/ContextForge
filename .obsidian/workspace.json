@@ -183,16 +183,16 @@
   },
   "active": "7d4726f40934939c",
   "lastOpenFiles": [
-    "tests/fixtures/track-3/track-3-agent-session.jsonl",
-    "tests/fixtures/track-3",
-    "tests/fixtures",
-    "agents/entire-agent-roo/entire-agent-roo.exe",
-    "agents/entire-agent-roo/internal/roo/memory_test.go",
-    "agents/entire-agent-roo/internal/roo/memory.go",
-    "graphify-out/cache/stat-index.json",
-    "graphify-out/manifest.json",
-    "graphify-out/graph.json",
-    "graphify-out/cache/ast/v0.9.53-s2/006598d8904f13843d3438f43302a8f915d820d3032400c3f7744daad81dd916.json",
-    "graphify-out/cache/ast/v0.9.53-s2/cb292c46786fe173c0e2062f00d9d79e3fbfaca7e1c10aa9e79d073d70cea18d.json"
+    "FINAL.md",
+    "graphify-out/cache/ast/v0.9.14/b6e757f6d24d14adb53bfa8b888760e129b1766b774180f947d42b36fc367194.json",
+    "graphify-out/cache/ast/v0.9.14/8af464f48f9abc1072f205614e7d47b9c3d0078c5477a33a1aaeffa7cacdf277.json",
+    "graphify-out/cache/ast/v0.9.14/afa3d9e6ba5d764b84294793835f87616a9ff57900657d727df309767dccffce.json",
+    "graphify-out/cache/ast/v0.9.14/04d7d60d6ccabe33af04a5e68429b24acae66461dd188c8efbb1c64b1855b183.json",
+    "graphify-out/cache/ast/v0.9.14/dd2e85c4228cd20a137d9903300096a776775fc5761b2d39db40348631f00ee9.json",
+    "graphify-out/cache/ast/v0.9.14/34c022e60fd22a8e5afc14b6389ff848a3e526083b58c26541cfafa08e6836f4.json",
+    "graphify-out/cache/ast/v0.9.14/ce89f2eb5215779d6ccc16b2387e56ab7acda2cca98fa5c9348512d95cee6495.json",
+    "graphify-out/cache/ast/v0.9.14/3b8514a3d0696d677a526d83a078d3c6357c0a5ca74c538a3cbb6e15e545c479.json",
+    "graphify-out/cache/ast/v0.9.14/62ed56677b387530aa25dcc17a0094054fb6a09dc9bc80efacff45aabd0ddbc0.json",
+    "graphify-out/cache/ast/v0.9.14/52eaa3594ec6b25fa707dc54b25b044bc136e834748d11fab056c32413438dc2.json"
   ]
 }
