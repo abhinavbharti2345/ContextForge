@@ -1,6 +1,7 @@
 package roo
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,27 +16,207 @@ import (
 	"github.com/entireio/external-agents/agents/entire-agent-roo/internal/protocol"
 )
 
-func decodeEnvelope(data []byte) (RooTaskEnvelope, error) {
-	var env RooTaskEnvelope
-	if err := json.Unmarshal(data, &env); err == nil && (len(env.UiMessages) > 0 || env.TaskID != "") {
-		return env, nil
+func LoadSession(data []byte) (NormalizedSession, error) {
+	if len(data) == 0 {
+		return NormalizedSession{}, errors.New("empty data")
 	}
 
-	// Fallback: try parsing as raw []ClineMessage
+	// Heuristic for JSONL: starts with { and has newlines, or fails to unmarshal as a monolithic struct
+	var env RooTaskEnvelope
+	errEnv := json.Unmarshal(data, &env)
+	if errEnv == nil && (len(env.UiMessages) > 0 || env.TaskID != "") {
+		return convertEnvelopeToNormalized(env), nil
+	}
+
+	// Try as raw []ClineMessage
 	var messages []ClineMessage
-	if err := json.Unmarshal(data, &messages); err == nil {
+	if err := json.Unmarshal(data, &messages); err == nil && len(messages) > 0 {
 		var firstTs int64
 		if len(messages) > 0 {
 			firstTs = messages[0].Ts
 		}
-		return RooTaskEnvelope{
+		env = RooTaskEnvelope{
 			CreatedAt:  firstTs,
 			UpdatedAt:  time.Now().UnixMilli(),
 			UiMessages: messages,
-		}, nil
+		}
+		return convertEnvelopeToNormalized(env), nil
 	}
 
-	return RooTaskEnvelope{}, errors.New("unrecognized Roo transcript format")
+	// Try as JSONL
+	session, err := parseJSONLSession(data)
+	if err == nil && len(session.Events) > 0 {
+		return session, nil
+	}
+
+	return NormalizedSession{}, errors.New("unrecognized Roo transcript format")
+}
+
+func parseJSONLSession(data []byte) (NormalizedSession, error) {
+	var session NormalizedSession
+	lines := bytes.Split(data, []byte("\n"))
+	
+	for i, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		var raw map[string]interface{}
+		if err := json.Unmarshal(line, &raw); err != nil {
+			if i == len(lines)-1 || (i == len(lines)-2 && len(bytes.TrimSpace(lines[len(lines)-1])) == 0) {
+				// Last line is truncated
+				session.Partial = true
+				break
+			}
+			continue
+		}
+
+		event := NormalizedEvent{Raw: line}
+		if tsStr, ok := raw["timestamp"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+				event.Timestamp = t
+			}
+		}
+
+		if sid, ok := raw["session_id"].(string); ok && session.SessionID == "" {
+			session.SessionID = sid
+		}
+
+		evtType, _ := raw["event"].(string)
+		event.Type = EventType(evtType)
+
+		switch event.Type {
+		case EventUserPrompt:
+			event.Role = "user"
+			event.Text, _ = raw["text"].(string)
+			event.IsTurnComplete = false
+		case EventAgentResponse:
+			event.Role = "assistant"
+			event.Text, _ = raw["text"].(string)
+			event.IsTurnComplete = true
+		case EventToolCall:
+			event.ToolName, _ = raw["tool"].(string)
+			if inputMap, ok := raw["input"].(map[string]interface{}); ok {
+				inputBytes, _ := json.Marshal(inputMap)
+				event.ToolInput = inputBytes
+			}
+			event.IsTurnComplete = false
+		case EventFileChanged:
+			if path, ok := raw["path"].(string); ok {
+				event.ModifiedFiles = append(event.ModifiedFiles, path)
+			}
+			event.IsTurnComplete = false
+		case EventSessionEnded:
+			event.IsTurnComplete = true
+			event.IsTaskComplete = true
+		case EventUsage:
+			if in, ok := raw["input_tokens"].(float64); ok {
+				event.InputTokens = int(in)
+			}
+			if out, ok := raw["output_tokens"].(float64); ok {
+				event.OutputTokens = int(out)
+			}
+		case EventCheckpoint:
+			event.IsTurnComplete = true
+		default:
+			// Ensure unknown events don't crash and are mapped safely
+			event.Type = EventUnknown
+		}
+
+		session.Events = append(session.Events, event)
+	}
+
+	return session, nil
+}
+
+func convertEnvelopeToNormalized(env RooTaskEnvelope) NormalizedSession {
+	var session NormalizedSession
+	session.SessionID = env.TaskID
+
+	for _, msg := range env.UiMessages {
+		event := NormalizedEvent{
+			Timestamp: msg.Time(),
+			Raw:       nil,
+		}
+
+		if msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback") {
+			event.Type = EventUserPrompt
+			event.Role = "user"
+			event.Text = msg.Text
+		} else if msg.Type == "say" && msg.Say == "text" {
+			event.Type = EventAgentResponse
+			event.Role = "assistant"
+			event.Text = msg.Text
+		} else if msg.Type == "say" && msg.Say == "completion_result" {
+			event.Type = EventAgentResponse
+			event.Role = "assistant"
+			event.Text = msg.Text
+			event.IsTurnComplete = true
+		} else if msg.Say == "tool" && msg.Text != "" {
+			event.Type = EventToolCall
+			var toolCall struct {
+				Tool string `json:"tool"`
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal([]byte(msg.Text), &toolCall); err == nil {
+				event.ToolName = toolCall.Tool
+				if isMutatingToolName(toolCall.Tool) && toolCall.Path != "" {
+					event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(toolCall.Path))
+				}
+			}
+		} else if msg.Say == "api_req_started" && msg.Text != "" {
+			event.Type = EventUsage
+			var meta ApiReqStartedData
+			if err := json.Unmarshal([]byte(msg.Text), &meta); err == nil {
+				event.InputTokens = meta.TokensIn
+				event.OutputTokens = meta.TokensOut
+			}
+		} else {
+			event.Type = EventUnknown
+		}
+
+		session.Events = append(session.Events, event)
+	}
+
+	// Check ApiConversationHistory for tool mutations
+	for _, msg := range env.ApiConversationHistory {
+		for _, part := range msg.Content {
+			if part.Type == "tool_use" && isMutatingToolName(part.Name) && len(part.Input) > 0 {
+				event := NormalizedEvent{
+					Type:     EventToolCall,
+					ToolName: part.Name,
+				}
+				var input struct {
+					Path     string   `json:"path"`
+					FilePath string   `json:"filePath"`
+					File     string   `json:"file"`
+					Paths    []string `json:"paths"`
+					Files    []string `json:"files"`
+				}
+				if err := json.Unmarshal(part.Input, &input); err == nil {
+					if input.Path != "" {
+						event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(input.Path))
+					}
+					if input.FilePath != "" {
+						event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(input.FilePath))
+					}
+					if input.File != "" {
+						event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(input.File))
+					}
+					for _, p := range input.Paths {
+						event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(p))
+					}
+					for _, f := range input.Files {
+						event.ModifiedFiles = append(event.ModifiedFiles, cleanFile(f))
+					}
+				}
+				session.Events = append(session.Events, event)
+			}
+		}
+	}
+
+	return session
 }
 
 func (a *Agent) ReadSession(input *protocol.HookInputJSON) (protocol.AgentSessionJSON, error) {
@@ -56,26 +237,24 @@ func (a *Agent) ReadSession(input *protocol.HookInputJSON) (protocol.AgentSessio
 	if err != nil {
 		return protocol.AgentSessionJSON{}, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return protocol.AgentSessionJSON{}, err
 	}
 
 	if sessionID == "" {
-		sessionID = env.TaskID
+		sessionID = session.SessionID
 	}
 	if sessionID == "" {
 		sessionID = strings.TrimSuffix(filepath.Base(sessionRef), filepath.Ext(sessionRef))
 	}
 
 	startTime := time.Now().UTC()
-	if env.CreatedAt > 0 {
-		startTime = time.UnixMilli(env.CreatedAt).UTC()
-	} else if len(env.UiMessages) > 0 && env.UiMessages[0].Ts > 0 {
-		startTime = time.UnixMilli(env.UiMessages[0].Ts).UTC()
+	if len(session.Events) > 0 {
+		startTime = session.Events[0].Timestamp
 	}
 
-	modified := modifiedFilesFromEnvelope(env, 0)
+	modified := modifiedFilesFromSession(session, 0)
 
 	return protocol.AgentSessionJSON{
 		SessionID:     sessionID,
@@ -102,42 +281,50 @@ func (a *Agent) PrepareTranscript(sessionRef string) error {
 	}
 
 	taskFolder := filepath.Join(tasksDir, taskID)
+	
+	// Check for new JSONL format
+	jsonlPath := filepath.Join(taskFolder, "transcript.jsonl") // Assumption or try finding any .jsonl
+	
+	// Fallback to old format
 	uiMessagesPath := filepath.Join(taskFolder, "ui_messages.json")
 	apiHistoryPath := filepath.Join(taskFolder, "api_conversation_history.json")
 
-	uiData, err := os.ReadFile(uiMessagesPath)
-	if err != nil {
-		// Task folder might not exist on disk in some environments; ignore error
+	var encoded []byte
+
+	if data, err := os.ReadFile(jsonlPath); err == nil {
+		encoded = data
+	} else if uiData, err := os.ReadFile(uiMessagesPath); err == nil {
+		var uiMessages []ClineMessage
+		if err := json.Unmarshal(uiData, &uiMessages); err != nil {
+			return err
+		}
+
+		var apiHistory []ApiMessage
+		if apiData, err := os.ReadFile(apiHistoryPath); err == nil {
+			_ = json.Unmarshal(apiData, &apiHistory)
+		}
+
+		var firstTs, lastTs int64
+		if len(uiMessages) > 0 {
+			firstTs = uiMessages[0].Ts
+			lastTs = uiMessages[len(uiMessages)-1].Ts
+		}
+
+		env := RooTaskEnvelope{
+			TaskID:                 taskID,
+			CreatedAt:              firstTs,
+			UpdatedAt:              lastTs,
+			UiMessages:             uiMessages,
+			ApiConversationHistory: apiHistory,
+		}
+
+		encoded, err = json.MarshalIndent(env, "", "  ")
+		if err != nil {
+			return err
+		}
+	} else {
+		// Task folder might not exist on disk
 		return nil
-	}
-
-	var uiMessages []ClineMessage
-	if err := json.Unmarshal(uiData, &uiMessages); err != nil {
-		return err
-	}
-
-	var apiHistory []ApiMessage
-	if apiData, err := os.ReadFile(apiHistoryPath); err == nil {
-		_ = json.Unmarshal(apiData, &apiHistory)
-	}
-
-	var firstTs, lastTs int64
-	if len(uiMessages) > 0 {
-		firstTs = uiMessages[0].Ts
-		lastTs = uiMessages[len(uiMessages)-1].Ts
-	}
-
-	env := RooTaskEnvelope{
-		TaskID:                 taskID,
-		CreatedAt:              firstTs,
-		UpdatedAt:              lastTs,
-		UiMessages:             uiMessages,
-		ApiConversationHistory: apiHistory,
-	}
-
-	encoded, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return err
 	}
 
 	if err := os.MkdirAll(filepath.Dir(sessionRef), 0o750); err != nil {
@@ -161,7 +348,7 @@ func (a *Agent) ReadTranscript(sessionRef string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := decodeEnvelope(data); err != nil {
+	if _, err := LoadSession(data); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -196,11 +383,11 @@ func (a *Agent) GetTranscriptPosition(path string) (int, error) {
 		}
 		return 0, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return 0, err
 	}
-	return len(env.UiMessages), nil
+	return len(session.Events), nil
 }
 
 func (a *Agent) ExtractModifiedFiles(path string, offset int) ([]string, int, error) {
@@ -208,12 +395,12 @@ func (a *Agent) ExtractModifiedFiles(path string, offset int) ([]string, int, er
 	if err != nil {
 		return nil, 0, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return nil, 0, err
 	}
-	files := modifiedFilesFromEnvelope(env, offset)
-	return files, len(env.UiMessages), nil
+	files := modifiedFilesFromSession(session, offset)
+	return files, len(session.Events), nil
 }
 
 func (a *Agent) ExtractPrompts(sessionRef string, offset int) ([]string, error) {
@@ -221,34 +408,20 @@ func (a *Agent) ExtractPrompts(sessionRef string, offset int) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return nil, err
 	}
 
 	var prompts []string
-	messages := env.UiMessages
 	if offset < 0 {
 		offset = 0
 	}
-	if offset < len(messages) {
-		for _, msg := range messages[offset:] {
-			if msg.Type == "say" && (msg.Say == "task" || msg.Say == "user_feedback") {
+	if offset < len(session.Events) {
+		for _, msg := range session.Events[offset:] {
+			if msg.Type == EventUserPrompt {
 				if text := strings.TrimSpace(msg.Text); text != "" {
 					prompts = append(prompts, text)
-				}
-			}
-		}
-	}
-
-	// Fallback to ApiConversationHistory if uiMessages had no prompts
-	if len(prompts) == 0 && len(env.ApiConversationHistory) > 0 {
-		for _, msg := range env.ApiConversationHistory {
-			if msg.Role == "user" {
-				for _, part := range msg.Content {
-					if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-						prompts = append(prompts, strings.TrimSpace(part.Text))
-					}
 				}
 			}
 		}
@@ -262,36 +435,15 @@ func (a *Agent) ExtractSummary(sessionRef string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return "", false, err
 	}
 
-	// 1. Look for completion_result
-	for i := len(env.UiMessages) - 1; i >= 0; i-- {
-		msg := env.UiMessages[i]
-		if msg.Say == "completion_result" && strings.TrimSpace(msg.Text) != "" {
+	for i := len(session.Events) - 1; i >= 0; i-- {
+		msg := session.Events[i]
+		if msg.Type == EventAgentResponse && strings.TrimSpace(msg.Text) != "" {
 			return strings.TrimSpace(msg.Text), true, nil
-		}
-	}
-
-	// 2. Look for last non-empty assistant text in ui_messages
-	for i := len(env.UiMessages) - 1; i >= 0; i-- {
-		msg := env.UiMessages[i]
-		if msg.Type == "say" && msg.Say == "text" && strings.TrimSpace(msg.Text) != "" {
-			return strings.TrimSpace(msg.Text), true, nil
-		}
-	}
-
-	// 3. Fallback to last assistant text in api_conversation_history
-	for i := len(env.ApiConversationHistory) - 1; i >= 0; i-- {
-		msg := env.ApiConversationHistory[i]
-		if msg.Role == "assistant" {
-			for _, part := range msg.Content {
-				if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-					return strings.TrimSpace(part.Text), true, nil
-				}
-			}
 		}
 	}
 
@@ -299,27 +451,23 @@ func (a *Agent) ExtractSummary(sessionRef string) (string, bool, error) {
 }
 
 func (a *Agent) CalculateTokens(data []byte, offset int) (protocol.TokenUsageResponse, error) {
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return protocol.TokenUsageResponse{}, err
 	}
 
 	var usage protocol.TokenUsageResponse
-	messages := env.UiMessages
 	if offset < 0 {
 		offset = 0
 	}
-	if offset < len(messages) {
-		for _, msg := range messages[offset:] {
-			if msg.Say == "api_req_started" && msg.Text != "" {
-				var meta ApiReqStartedData
-				if err := json.Unmarshal([]byte(msg.Text), &meta); err == nil {
-					usage.InputTokens += meta.TokensIn
-					usage.OutputTokens += meta.TokensOut
-					usage.CacheReadTokens += meta.CacheReads
-					usage.CacheCreationTokens += meta.CacheWrites
-					usage.APICallCount++
-				}
+	if offset < len(session.Events) {
+		for _, msg := range session.Events[offset:] {
+			if msg.Type == EventUsage {
+				usage.InputTokens += msg.InputTokens
+				usage.OutputTokens += msg.OutputTokens
+			}
+			if msg.Type == EventToolCall || msg.Type == EventToolResult {
+				usage.APICallCount++
 			}
 		}
 	}
@@ -332,24 +480,24 @@ func (a *Agent) CompactTranscript(sessionRef string) (protocol.CompactTranscript
 	if err != nil {
 		return protocol.CompactTranscriptResponse{}, err
 	}
-	env, err := decodeEnvelope(data)
+	session, err := LoadSession(data)
 	if err != nil {
 		return protocol.CompactTranscriptResponse{}, err
 	}
 
 	var lines []string
-	for _, msg := range env.UiMessages {
+	for _, msg := range session.Events {
 		if msg.Text == "" {
 			continue
 		}
-		role := "assistant"
-		if msg.Say == "task" || msg.Say == "user_feedback" {
-			role = "user"
+		role := msg.Role
+		if role == "" {
+			role = "system"
 		}
 		entry := map[string]interface{}{
 			"role":    role,
 			"content": msg.Text,
-			"ts":      msg.Ts,
+			"ts":      msg.Timestamp.UnixMilli(),
 		}
 		if raw, err := json.Marshal(entry); err == nil {
 			lines = append(lines, string(raw))
@@ -361,72 +509,16 @@ func (a *Agent) CompactTranscript(sessionRef string) (protocol.CompactTranscript
 	return protocol.CompactTranscriptResponse{Transcript: encoded}, nil
 }
 
-func modifiedFilesFromEnvelope(env RooTaskEnvelope, offset int) []string {
+func modifiedFilesFromSession(session NormalizedSession, offset int) []string {
 	seen := map[string]bool{}
 
-	// Scan UI messages for mutating tools
-	messages := env.UiMessages
 	if offset < 0 {
 		offset = 0
 	}
-	if offset < len(messages) {
-		for _, msg := range messages[offset:] {
-			if msg.Say == "tool" && msg.Text != "" {
-				var toolCall struct {
-					Tool    string `json:"tool"`
-					Path    string `json:"path"`
-					Diff    string `json:"diff"`
-					Command string `json:"command"`
-				}
-				if err := json.Unmarshal([]byte(msg.Text), &toolCall); err == nil {
-					if isMutatingToolName(toolCall.Tool) && toolCall.Path != "" {
-						if clean := cleanFile(toolCall.Path); clean != "" {
-							seen[clean] = true
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Scan ApiConversationHistory for tool_use parts
-	for _, msg := range env.ApiConversationHistory {
-		for _, part := range msg.Content {
-			if part.Type == "tool_use" && isMutatingToolName(part.Name) && len(part.Input) > 0 {
-				var input struct {
-					Path     string   `json:"path"`
-					FilePath string   `json:"filePath"`
-					File     string   `json:"file"`
-					Paths    []string `json:"paths"`
-					Files    []string `json:"files"`
-				}
-				if err := json.Unmarshal(part.Input, &input); err == nil {
-					if input.Path != "" {
-						if clean := cleanFile(input.Path); clean != "" {
-							seen[clean] = true
-						}
-					}
-					if input.FilePath != "" {
-						if clean := cleanFile(input.FilePath); clean != "" {
-							seen[clean] = true
-						}
-					}
-					if input.File != "" {
-						if clean := cleanFile(input.File); clean != "" {
-							seen[clean] = true
-						}
-					}
-					for _, p := range input.Paths {
-						if clean := cleanFile(p); clean != "" {
-							seen[clean] = true
-						}
-					}
-					for _, f := range input.Files {
-						if clean := cleanFile(f); clean != "" {
-							seen[clean] = true
-						}
-					}
-				}
+	if offset < len(session.Events) {
+		for _, msg := range session.Events[offset:] {
+			for _, file := range msg.ModifiedFiles {
+				seen[file] = true
 			}
 		}
 	}

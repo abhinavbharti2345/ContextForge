@@ -183,6 +183,9 @@
   },
   "active": "7d4726f40934939c",
   "lastOpenFiles": [
+    "tests/fixtures/track-3/track-3-agent-session.jsonl",
+    "tests/fixtures/track-3",
+    "tests/fixtures",
     "agents/entire-agent-roo/entire-agent-roo.exe",
     "agents/entire-agent-roo/internal/roo/memory_test.go",
     "agents/entire-agent-roo/internal/roo/memory.go",
@@ -190,9 +193,6 @@
     "graphify-out/manifest.json",
     "graphify-out/graph.json",
     "graphify-out/cache/ast/v0.9.53-s2/006598d8904f13843d3438f43302a8f915d820d3032400c3f7744daad81dd916.json",
-    "graphify-out/cache/ast/v0.9.53-s2/cb292c46786fe173c0e2062f00d9d79e3fbfaca7e1c10aa9e79d073d70cea18d.json",
-    "graphify-out/cache/ast/v0.9.53-s2/8f20f74b61989d90b7adc9f98a0220124e81ba6947410febacd9080afce18e11.json",
-    "graphify-out/cache/ast/v0.9.53-s2/25980907269719017115678ff837f6af948ae1dd00c744f2ab2ac86e7ba2c518.json",
-    "graphify-out/cache/ast/v0.9.53-s2/0de69f46ca48e697930f21f0fa6109ea19b79c0d070fdb5f358cd5f21ee02ec5.json"
+    "graphify-out/cache/ast/v0.9.53-s2/cb292c46786fe173c0e2062f00d9d79e3fbfaca7e1c10aa9e79d073d70cea18d.json"
   ]
 }

@@ -5,6 +5,43 @@ import (
 	"time"
 )
 
+type EventType string
+
+const (
+	EventUserPrompt      EventType = "user_prompt"
+	EventAgentResponse   EventType = "agent_response"
+	EventToolCall        EventType = "tool_call"
+	EventToolResult      EventType = "tool_result"
+	EventFileChanged     EventType = "file_changed"
+	EventFileRead        EventType = "file_read"
+	EventUsage           EventType = "usage"
+	EventSessionStarted  EventType = "session_started"
+	EventSessionEnded    EventType = "session_ended"
+	EventCheckpoint      EventType = "checkpoint_created"
+	EventUnknown         EventType = "unknown"
+)
+
+type NormalizedEvent struct {
+	Timestamp      time.Time
+	Type           EventType
+	Raw            json.RawMessage
+	Role           string // "user" or "assistant"
+	Text           string
+	ToolName       string
+	ToolInput      json.RawMessage
+	ModifiedFiles  []string // Derived from tool input or file_changed event
+	InputTokens    int
+	OutputTokens   int
+	IsTurnComplete bool // Flag indicating if this event completes a turn
+	IsTaskComplete bool // Flag indicating if this event completes a task
+}
+
+type NormalizedSession struct {
+	SessionID string
+	Partial   bool
+	Events    []NormalizedEvent
+}
+
 type ClineMessage struct {
 	Ts                       int64    `json:"ts"`
 	Type                     string   `json:"type"` // "say" or "ask"
