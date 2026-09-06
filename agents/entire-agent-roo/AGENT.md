@@ -1,15 +1,17 @@
 # Roo Code — External Agent Research & Architecture Specification
 
-## Verdict: COMPATIBLE
+## Verdict: COMPATIBLE (Storage Ingestion Model)
 
-Roo Code (formerly Roo-Cline) is an AI coding assistant supporting multi-mode operation, MCP servers, and full task persistence. It stores comprehensive task history across `ui_messages.json` (UI trace and tool interactions) and `api_conversation_history.json` (raw model messages with token usage breakdowns).
+Roo Code (formerly Roo-Cline) is an AI coding assistant supporting multi-mode operation, MCP servers, and durable task persistence. It stores comprehensive task history across `ui_messages.json` (UI trace and tool interactions) and `api_conversation_history.json` (raw model messages with token usage breakdowns).
+
+Roo Code does not provide native lifecycle command hooks in its extension codebase. Instead, the adapter functions as a **storage-driven external agent**, ingesting and analyzing live task storage from the VS Code `globalStorage` directory.
 
 ## Static Checks
 | Check | Result | Notes |
 | :--- | :--- | :--- |
 | Binary present | Optional | `roo` / `roo-code` via `@roocode/cli`; VS Code desktop extension supported via globalStorage discovery |
 | Storage discovery | PASS | `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\tasks\` (Windows), `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/` (macOS), `~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/` (Linux) |
-| Config directory | PASS | `.roo/` (workspace) and `~/.roo/` (user) |
+| Native Hooks | FAIL / N/A | No native command hook dispatcher in Roo Code codebase |
 | Tool events | PASS | `write_to_file`, `replace_in_file`, `execute_command`, `read_file`, `use_mcp_tool` |
 
 ## Storage & Transcript Model
@@ -26,7 +28,7 @@ Roo Code (formerly Roo-Cline) is an AI coding assistant supporting multi-mode op
 ## Protocol Mapping
 | Subcommand | Native Roo Concept | Implementation |
 | :--- | :--- | :--- |
-| `info` | Static metadata | Returns name `roo`, type `Roo Code`, preview |
+| `info` | Static metadata | Returns name `roo`, type `Roo Code`, preview, `hooks: false` |
 | `detect` | CLI / globalStorage | Checks `roo` on PATH or VS Code task storage directory |
 | `get-session-id` | `taskId` | Returns task ID |
 | `get-session-dir` | `.entire/tmp/roo` | Isolated temp session dir |
@@ -39,10 +41,10 @@ Roo Code (formerly Roo-Cline) is an AI coding assistant supporting multi-mode op
 | `compact-transcript` | Compact JSONL | Emits Entire Compact Transcript format |
 | `prepare-transcript` | Storage Ingestion | Ingests `ui_messages.json` + `api_conversation_history.json` from globalStorage |
 | `format-resume-command`| Roo CLI resume | `roo --resume <taskId>` |
-| `parse-hook` | Event JSON | Maps lifecycle events to Entire event codes |
-| `install-hooks` | Workspace config | Writes `.roo/hooks.json` |
-| `uninstall-hooks` | Workspace config | Cleans up `.roo/hooks.json` |
-| `are-hooks-installed` | Workspace config | Verifies `.roo/hooks.json` marker |
+| `parse-hook` | No-op | Returns `nil` (Roo has no native command hooks) |
+| `install-hooks` | No-op | Returns `0, nil` |
+| `uninstall-hooks` | No-op | Returns `nil` |
+| `are-hooks-installed` | No-op | Returns `false` |
 | `get-transcript-position`| UI message count | Returns number of UI messages |
 | `extract-modified-files` | Mutating tool calls | Extracts file paths from `write_to_file`, `replace_in_file`, etc. |
 | `extract-prompts` | Task / User prompts | Reads initial task prompt and subsequent user turns |
@@ -52,12 +54,12 @@ Roo Code (formerly Roo-Cline) is an AI coding assistant supporting multi-mode op
 ## Selected Capabilities
 | Capability | Declared | Justification |
 | :--- | :--- | :--- |
-| `hooks` | true | Supported via `.roo/hooks.json` and adapter events |
-| `transcript_analyzer` | true | `ui_messages.json` + `api_conversation_history.json` contain structured tools & prompts |
-| `transcript_preparer` | true | Ingests live task data from VS Code `globalStorage` |
-| `compact_transcript` | true | Formats to Entire Compact Transcript format |
-| `token_calculator` | true | Accurate token counts in `api_req_started` |
-| `uses_terminal` | true | Roo commands execute via terminal |
+| `hooks` | **false** | Roo Code has no native command hooks |
+| `transcript_analyzer` | **true** | `ui_messages.json` + `api_conversation_history.json` contain structured tools & prompts |
+| `transcript_preparer` | **true** | Ingests live task data from VS Code `globalStorage` |
+| `compact_transcript` | **true** | Formats to Entire Compact Transcript format |
+| `token_calculator` | **true** | Accurate token counts in `api_req_started` |
+| `uses_terminal` | **true** | Roo commands execute via terminal |
 | `text_generator` | false | Defer |
 | `hook_response_writer` | false | Defer |
 | `subagent_aware_extractor` | false | Defer |

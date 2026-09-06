@@ -64,6 +64,8 @@ func main() {
 		err = protocol.HandleExtractSummary(os.Args[2:], os.Stdout, agent)
 	case "calculate-tokens":
 		err = protocol.HandleCalculateTokens(os.Args[2:], os.Stdin, os.Stdout, agent)
+	case "watch":
+		err = roo.RunWatcher(os.Args[2:], os.Stdout, os.Stderr)
 	default:
 		fatalf("unknown subcommand: %s", os.Args[1])
 	}

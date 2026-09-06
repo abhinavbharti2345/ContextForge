@@ -1,92 +1,36 @@
 package roo
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
-func TestParseHookSessionStart(t *testing.T) {
+func TestParseHookNoOp(t *testing.T) {
 	agent := New()
-	payload := []byte(`{"session_id":"task-123","event":"SessionStart"}`)
-
-	event, err := agent.ParseHook(HookNameSessionStart, payload)
+	event, err := agent.ParseHook("turn-end", []byte(`{"session_id":"123"}`))
 	if err != nil {
 		t.Fatalf("ParseHook failed: %v", err)
 	}
-	if event == nil {
-		t.Fatal("expected non-nil event")
-	}
-	if event.Type != 1 {
-		t.Errorf("event.Type = %d, want 1", event.Type)
-	}
-	if event.SessionID != "task-123" {
-		t.Errorf("event.SessionID = %q, want task-123", event.SessionID)
+	if event != nil {
+		t.Errorf("expected nil event, got %+v", event)
 	}
 }
 
-func TestParseHookTurnStart(t *testing.T) {
+func TestInstallAndUninstallHooksNoOp(t *testing.T) {
 	agent := New()
-	payload := []byte(`{"session_id":"task-123","prompt":"Refactor database queries"}`)
-
-	event, err := agent.ParseHook(HookNameTurnStart, payload)
-	if err != nil {
-		t.Fatalf("ParseHook failed: %v", err)
-	}
-	if event == nil {
-		t.Fatal("expected non-nil event")
-	}
-	if event.Type != 2 {
-		t.Errorf("event.Type = %d, want 2", event.Type)
-	}
-	if event.Prompt != "Refactor database queries" {
-		t.Errorf("event.Prompt = %q, want 'Refactor database queries'", event.Prompt)
-	}
-}
-
-func TestParseHookTurnEnd(t *testing.T) {
-	agent := New()
-	payload := []byte(`{"session_id":"task-123"}`)
-
-	event, err := agent.ParseHook(HookNameTurnEnd, payload)
-	if err != nil {
-		t.Fatalf("ParseHook failed: %v", err)
-	}
-	if event == nil {
-		t.Fatal("expected non-nil event")
-	}
-	if event.Type != 3 {
-		t.Errorf("event.Type = %d, want 3", event.Type)
-	}
-}
-
-func TestInstallAndUninstallHooks(t *testing.T) {
-	agent := New()
-	tempRepo := t.TempDir()
-	t.Setenv("ENTIRE_REPO_ROOT", tempRepo)
 
 	installed, err := agent.InstallHooks(false, true)
 	if err != nil {
 		t.Fatalf("InstallHooks failed: %v", err)
 	}
-	if installed != 4 {
-		t.Errorf("installed = %d, want 4", installed)
+	if installed != 0 {
+		t.Errorf("installed = %d, want 0", installed)
 	}
 
-	if !agent.AreHooksInstalled() {
-		t.Fatal("expected AreHooksInstalled = true")
-	}
-
-	hooksFile := filepath.Join(tempRepo, ".roo", "hooks.json")
-	if _, err := os.Stat(hooksFile); err != nil {
-		t.Fatalf(".roo/hooks.json not found: %v", err)
+	if agent.AreHooksInstalled() {
+		t.Fatal("expected AreHooksInstalled = false")
 	}
 
 	if err := agent.UninstallHooks(); err != nil {
 		t.Fatalf("UninstallHooks failed: %v", err)
-	}
-
-	if agent.AreHooksInstalled() {
-		t.Fatal("expected AreHooksInstalled = false after uninstall")
 	}
 }
