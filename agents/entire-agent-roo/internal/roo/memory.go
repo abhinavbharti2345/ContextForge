@@ -216,6 +216,103 @@ func ExtractMemory(env RooTaskEnvelope, sessionID, checkpointID string) Developm
 	return memory
 }
 
+// ExtractMemoryFromSession extracts structured DevelopmentMemory from a NormalizedSession.
+func ExtractMemoryFromSession(session NormalizedSession, sessionID, checkpointID string) DevelopmentMemory {
+	if sessionID == "" {
+		sessionID = session.SessionID
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if len(session.Events) > 0 && !session.Events[0].Timestamp.IsZero() {
+		now = session.Events[0].Timestamp.UTC().Format(time.RFC3339)
+	}
+
+	memory := DevelopmentMemory{
+		SessionID:    sessionID,
+		CheckpointID: checkpointID,
+		Timestamp:    now,
+		Changes:      []MemoryFileChange{},
+		Evidence:     []MemoryEvidence{},
+	}
+
+	// 1. Extract Intent
+	for _, evt := range session.Events {
+		if evt.Type == EventUserPrompt {
+			text := strings.TrimSpace(evt.Text)
+			if text != "" {
+				if memory.Intent == "" {
+					memory.Intent = text
+				}
+				detail := ""
+				if !evt.Timestamp.IsZero() {
+					detail = fmt.Sprintf("Timestamp: %s", evt.Timestamp.UTC().Format(time.RFC3339))
+				}
+				memory.Evidence = append(memory.Evidence, MemoryEvidence{
+					Kind:   "prompt",
+					Target: text,
+					Detail: detail,
+				})
+			}
+		}
+	}
+
+	// 2. Extract Changes
+	seenFiles := map[string]bool{}
+	for _, evt := range session.Events {
+		for _, clean := range evt.ModifiedFiles {
+			if clean != "" && !seenFiles[clean] {
+				seenFiles[clean] = true
+				action := "modified"
+				toolName := evt.ToolName
+				if toolName == "" {
+					toolName = string(evt.Type)
+				}
+				if strings.Contains(strings.ToLower(toolName), "create") || strings.Contains(strings.ToLower(toolName), "write") {
+					action = "created/modified"
+				}
+				memory.Changes = append(memory.Changes, MemoryFileChange{
+					Path:   clean,
+					Action: action,
+					Tool:   toolName,
+				})
+				memory.Evidence = append(memory.Evidence, MemoryEvidence{
+					Kind:   "tool_trace",
+					Target: clean,
+					Detail: fmt.Sprintf("Tool: %s", toolName),
+				})
+			}
+		}
+	}
+
+	// 3. Extract Explicit Decisions
+	for _, evt := range session.Events {
+		if evt.Role == "assistant" && evt.Text != "" {
+			extractDecisionsFromText(evt.Text, &memory)
+		}
+	}
+
+	// 4. Extract Problems & Errors
+	for _, evt := range session.Events {
+		if evt.Type == EventToolResult && (strings.Contains(evt.Text, "Error") || strings.Contains(evt.Text, "failed")) {
+			memory.Problems = append(memory.Problems, MemoryProblem{
+				Description: "Tool execution returned an error",
+				Error:       strings.TrimSpace(evt.Text),
+			})
+		}
+	}
+
+	// 5. Extract Outcomes
+	if !session.Partial {
+		for _, evt := range session.Events {
+			if evt.IsTaskComplete && strings.TrimSpace(evt.Text) != "" {
+				memory.Outcomes = append(memory.Outcomes, strings.TrimSpace(evt.Text))
+			}
+		}
+	}
+
+	return memory
+}
+
 func extractDecisionsFromText(text string, memory *DevelopmentMemory) {
 	matches := reDecidedBecause.FindAllStringSubmatch(text, -1)
 	for _, m := range matches {
@@ -417,9 +514,9 @@ func loadAllMemories(repoRoot string) []DevelopmentMemory {
 			if strings.HasSuffix(e.Name(), ".json") && !strings.HasPrefix(e.Name(), "memory-") {
 				path := filepath.Join(rooTmp, e.Name())
 				if data, err := os.ReadFile(path); err == nil {
-					if env, err := decodeEnvelope(data); err == nil {
+					if session, err := LoadSession(data); err == nil {
 						sessionID := strings.TrimSuffix(e.Name(), ".json")
-						memories = append(memories, ExtractMemory(env, sessionID, ""))
+						memories = append(memories, ExtractMemoryFromSession(session, sessionID, ""))
 					}
 				}
 			}
