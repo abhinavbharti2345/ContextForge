@@ -183,6 +183,7 @@
   },
   "active": "7d4726f40934939c",
   "lastOpenFiles": [
+    "go.mod",
     "Buildathon.md",
     "UNOBSERVED_CHANGE_DEMO.md",
     "agents/entire-agent-roo/internal/roo/context_gap_test.go",
