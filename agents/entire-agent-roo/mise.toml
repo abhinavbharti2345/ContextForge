@@ -1,0 +1,7 @@
+[tasks.test]
+description = "Run unit tests for entire-agent-roo"
+run = "go test -v ./..."
+
+[tasks.build]
+description = "Build entire-agent-roo binary"
+run = "go build -o ../../bin/entire-agent-roo ./cmd/entire-agent-roo"
